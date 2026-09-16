@@ -9,6 +9,7 @@ export default async function handler(req, res) {
     if (!result || result.statusCode !== 200) return res.status(404).send('script not found');
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60');
     return res.status(200).send(await new Response(result.stream).text());
   } catch (error) {
