@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#09090b">
+  <meta name="description" content="Hospede seus scripts e gere links RAW.">
+  <title>rawhost — script hosting</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="rawhost início">
+      <span class="brand-mark">r</span>
+      <span>rawhost</span>
+    </a>
+    <div class="status"><span class="status-dot"></span>online</div>
+  </header>
+
+  <main class="page">
+    <section class="hero">
+      <div class="profile-wrap">
+        <img src="data:image/jpeg;base64,REPLACE_IMAGE" alt="profile" class="profile-image">
+        <span class="profile-ring"></span>
+      </div>
+      <p class="eyebrow">simple script hosting</p>
+      <h1>host your <span>raw script.</span></h1>
+      <p class="hero-text">Cole seu código, publique em segundos e receba um link RAW direto.</p>
+    </section>
+
+    <section class="panel" aria-label="Hospedar script">
+      <div class="panel-head">
+        <div>
+          <span class="panel-label">new upload</span>
+          <h2>seu script</h2>
+        </div>
+        <span class="language">lua</span>
+      </div>
+
+      <div class="editor-shell">
+        <div class="editor-top">
+          <div class="window-dots"><i></i><i></i><i></i></div>
+          <span id="lineCount">0 lines</span>
+        </div>
+        <div class="editor-body">
+          <div class="line-numbers" id="lineNumbers">1</div>
+          <textarea id="scriptInput" spellcheck="false" placeholder="-- cole seu script aqui..." aria-label="Código do script"></textarea>
+        </div>
+      </div>
+
+      <div class="action-row">
+        <span id="charCount">0 characters</span>
+        <button class="primary-btn" id="hostButton" type="button">
+          <span>host script</span>
+          <span class="arrow">↗</span>
+        </button>
+      </div>
+
+      <div class="result hidden" id="resultBox">
+        <div class="result-title"><span class="success-icon">✓</span><span>script hosted successfully</span></div>
+        <div class="link-grid">
+          <div class="link-card">
+            <span>raw link</span>
+            <div class="link-line"><input id="rawUrl" readonly><button class="copy-btn" data-copy="rawUrl">copy</button></div>
+          </div>
+          <div class="link-card">
+            <span>script id</span>
+            <div class="link-line"><input id="scriptId" readonly><button class="copy-btn" data-copy="scriptId">copy</button></div>
+          </div>
+        </div>
+        <div class="result-actions">
+          <button class="secondary-btn" id="copyScript" type="button">copy script</button>
+          <a class="secondary-btn" id="openRaw" href="#" target="_blank" rel="noopener">open raw</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="info-grid">
+      <article><span class="info-number">01</span><h3>paste</h3><p>Insira o código diretamente no editor.</p></article>
+      <article><span class="info-number">02</span><h3>publish</h3><p>O Vercel salva o arquivo no Blob Storage.</p></article>
+      <article><span class="info-number">03</span><h3>share</h3><p>Use o link RAW onde precisar.</p></article>
+    </section>
+  </main>
+
+  <footer>rawhost <span>•</span> powered by vercel</footer>
+  <div class="toast" id="toast"></div>
+  <script src="script.js"></script>
+</body>
+</html>
