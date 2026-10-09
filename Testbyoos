@@ -1,0 +1,2042 @@
+--[[
+    Chilli FlyTo GUI — Kovak (FULL BYPASS EDITION) — 1/5
+    Cole as 5 partes em sequência no mesmo executor.
+
+    Parte 1: config, helpers, state, movement ownership, persistência, save
+    Parte 2: Shield (Humanoid Swap / Disable Monitor), GodMode, Anti-Ragdoll
+    Parte 3: FlyTo (Heartbeat CFrame + PreSimulation velocity), Anti Guard hook
+    Parte 4: UI completa (arrastável, minimizável, lista de saves) + boot
+    Parte 5: Drop a cada 150 studs + auto-completar prompts + salvar UID
+]]
+
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
+local UserInputService  = game:GetService("UserInputService")
+local HttpService       = game:GetService("HttpService")
+local CoreGui           = game:GetService("CoreGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+
+local LocalPlayer       = Players.LocalPlayer
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ CONFIG                                                        ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local CONFIG = {
+    SavePath        = "ChilliFlyTo/positions.json",
+    FolderPath      = "ChilliFlyTo",
+
+    FlySpeed        = 400,       -- studs/s durante o voo
+    FlyHeight       = 10,        -- quanto sobe (+Y) antes de deslocar
+    ArriveRadius    = 6,         -- tolerância pra considerar "chegou"
+    Timeout         = 45,        -- segundos máx por voo
+
+    GodMode         = true,      -- states off + CanCollide false + BreakJointsOnDeath false
+    Shield          = "Humanoid Swap",  -- "Humanoid Swap" | "Disable Monitor" | "Off"
+    AntiRagdoll     = true,      -- escuta remote + attribute + scan de constraints
+    AntiGuardHook   = true,      -- teleporta pro alvo se tomar ragdoll no voo
+
+    RagdollWaitMax  = 2.0,       -- espera máx pra sair do ragdoll antes de começar
+    HitArmsTimeout  = 25,        -- timeout do anti-guard hook
+}
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ HELPERS                                                       ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function pc(fn, ...)
+    local ok, err = pcall(fn, ...)
+    return ok, err
+end
+
+local function GetRoot()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp and hrp:IsDescendantOf(workspace) then
+        return hrp, char
+    end
+    return nil
+end
+
+local function GetHumanoid()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChildOfClass("Humanoid")
+end
+
+local function GetBackpack()
+    return LocalPlayer:FindFirstChildOfClass("Backpack")
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ STATE                                                         ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local STATE = {
+    -- voo
+    Flying         = false,
+    CancelFlag     = false,
+    Saved          = {},
+
+    -- referências de UI e conexões de voo
+    Gui            = nil,
+    HB             = nil,       -- Heartbeat CFrame
+    Pre            = nil,       -- PreSimulation velocity
+    GodConn        = nil,       -- Heartbeat GodTick
+    GodCollides    = {},        -- BasePart -> CanCollide original
+    GodOn          = false,
+
+    -- Shield (Humanoid Swap)
+    ShieldPaused   = false,
+    SwapOriginal   = nil,
+    SwapClone      = nil,
+    SwapLinks      = {},
+    SwapConn       = nil,
+
+    -- Shield (Disable Monitor)
+    MonDisabled    = {},
+
+    -- Anti-Ragdoll
+    AntiRagLinks   = {},
+    AntiRagConn    = nil,
+    AntiRagLast    = 0,
+
+    -- Movement ownership
+    MoveOwner      = nil,
+
+    -- Anti-Guard hit hook
+    HitArms        = 0,
+    HitArmedAt     = 0,
+    PendingTarget  = nil,
+
+    -- genéricas
+    Connections    = {},
+}
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ MOVEMENT OWNERSHIP (padrão Chilli tbl4.ClaimMovement)         ║
+-- ║ Evita conflito entre módulos que tentam controlar o char.     ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function ClaimMovement(owner)
+    if STATE.MoveOwner == nil or STATE.MoveOwner == owner then
+        STATE.MoveOwner = owner
+        return true
+    end
+    return false
+end
+
+local function ReleaseMovement(owner)
+    if STATE.MoveOwner == owner then
+        STATE.MoveOwner = nil
+    end
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ PERSISTÊNCIA                                                  ║
+-- ║ Salva/carrega positions.json via readfile/writefile se existir║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function HasFileAPI()
+    return type(readfile)   == "function"
+       and type(writefile)  == "function"
+       and type(isfolder)   == "function"
+       and type(makefolder) == "function"
+       and type(isfile)     == "function"
+end
+
+local function LoadSaved()
+    if not HasFileAPI() then return end
+    pc(function()
+        if not isfolder(CONFIG.FolderPath) then
+            makefolder(CONFIG.FolderPath)
+        end
+        if isfile(CONFIG.SavePath) then
+            local raw  = readfile(CONFIG.SavePath)
+            local data = HttpService:JSONDecode(raw)
+            if type(data) == "table" then
+                STATE.Saved = data
+            end
+        end
+    end)
+end
+
+local function PersistSaved()
+    if not HasFileAPI() then return end
+    pc(function()
+        if not isfolder(CONFIG.FolderPath) then
+            makefolder(CONFIG.FolderPath)
+        end
+        writefile(CONFIG.SavePath, HttpService:JSONEncode(STATE.Saved))
+    end)
+end
+
+local function SaveCurrent(name)
+    name = tostring(name or ""):gsub("^%s+",""):gsub("%s+$","")
+    if name == "" then return false, "nome vazio" end
+
+    local hrp = GetRoot()
+    if not hrp then return false, "sem character" end
+
+    local p = hrp.Position
+    STATE.Saved[name] = { x = p.X, y = p.Y, z = p.Z }
+    PersistSaved()
+    return true
+end
+--[[ Chilli FlyTo GUI — 2/5
+     Shield (Humanoid Swap / Disable Monitor)
+     GodMode (states off + CanCollide false + BreakJointsOnDeath false)
+     Anti-Ragdoll (RemoteEvent hook + RagdollEndTime listener + Constraint scan)
+]]
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ SHIELD — método 1: "Humanoid Swap"                            ║
+-- ║ Clona o Humanoid, câmera vai pro clone, movimenta o original. ║
+-- ║ Padrão Chilli pra impedir ragdoll/stun.                       ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local ShieldSwap = {}
+
+function ShieldSwap.Undo()
+    for _, l in ipairs(STATE.SwapLinks) do
+        pc(function() l:Disconnect() end)
+    end
+    table.clear(STATE.SwapLinks)
+
+    local char  = LocalPlayer.Character
+    local orig  = STATE.SwapOriginal
+    local clone = STATE.SwapClone
+    STATE.SwapOriginal = nil
+    STATE.SwapClone    = nil
+
+    if orig and clone and char and orig.Parent == nil and clone.Parent == char then
+        -- devolve o humanoid original ao character
+        orig.Parent = char
+        pc(function() workspace.CurrentCamera.CameraSubject = orig end)
+
+        -- reconecta o PlayerModule ao humanoid original
+        pc(function()
+            local ps = LocalPlayer:FindFirstChild("PlayerScripts")
+            local pm = ps and ps:FindFirstChild("PlayerModule")
+            if pm then
+                local ctrl = require(pm):GetControls()
+                if type(ctrl) == "table" then ctrl.humanoid = orig end
+            end
+        end)
+
+        -- destrói o clone
+        pc(function() clone:Destroy() end)
+
+        -- força reload do Animate
+        pc(function()
+            local an = char:FindFirstChild("Animate")
+            if an and an:IsA("LocalScript") then
+                task.spawn(function()
+                    an.Enabled = false
+                    task.wait()
+                    an.Enabled = true
+                end)
+            end
+        end)
+    end
+end
+
+-- verifica se está no chão (swap no ar trava animação)
+local function Grounded(hum)
+    if not hum then hum = GetHumanoid() end
+    if not hum or hum.Health <= 0 or hum.FloorMaterial == Enum.Material.Air then
+        return false
+    end
+    local s = hum:GetState()
+    return s == Enum.HumanoidStateType.Running
+        or s == Enum.HumanoidStateType.RunningNoPhysics
+        or s == Enum.HumanoidStateType.Landed
+end
+
+function ShieldSwap.Swap()
+    local char = LocalPlayer.Character
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+    if STATE.SwapClone and STATE.SwapClone.Parent == char then return end
+    if not Grounded(hum) then return end
+
+    -- clona o humanoid
+    local clone = hum:Clone()
+    hum.Parent  = nil
+    clone.Parent = char
+    workspace.CurrentCamera.CameraSubject = clone
+
+    -- reconecta PlayerModule ao clone
+    pc(function()
+        local ps = LocalPlayer:FindFirstChild("PlayerScripts")
+        local pm = ps and ps:FindFirstChild("PlayerModule")
+        if pm then
+            local ctrl = require(pm):GetControls()
+            if type(ctrl) == "table" then ctrl.humanoid = clone end
+        end
+    end)
+
+    -- força reload do Animate
+    pc(function()
+        local an = char:FindFirstChild("Animate")
+        if an and an:IsA("LocalScript") then
+            task.spawn(function()
+                an.Enabled = false
+                task.wait()
+                an.Enabled = true
+            end)
+        end
+    end)
+
+    STATE.SwapOriginal = hum
+    STATE.SwapClone    = clone
+
+    -- sincroniza WalkSpeed
+    table.insert(STATE.SwapLinks,
+        hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+            if clone.Parent ~= nil then
+                clone.WalkSpeed = hum.WalkSpeed
+            end
+        end))
+
+    -- replica animações no clone
+    local a1 = hum:FindFirstChildOfClass("Animator")
+    local a2 = clone:FindFirstChildOfClass("Animator")
+    if a1 and a2 then
+        table.insert(STATE.SwapLinks, a1.AnimationPlayed:Connect(function(track)
+            local anim = track.Animation
+            if not anim or clone.Parent == nil then return end
+
+            local ok, loaded = pcall(function() return a2:LoadAnimation(anim) end)
+            if not ok or not loaded then return end
+
+            pc(function()
+                loaded.Priority = track.Priority
+                loaded.Looped   = track.Looped
+                loaded:Play(0.05, math.max(track.WeightTarget, 0.01), track.Speed)
+            end)
+
+            local c = nil
+            c = track.Stopped:Connect(function()
+                pc(function() c:Disconnect() end)
+                pc(function() loaded:Stop(0.1) end)
+            end)
+        end))
+    end
+
+    -- se o clone morrer, reseta tudo
+    table.insert(STATE.SwapLinks, clone.Died:Connect(function()
+        for _, l in ipairs(STATE.SwapLinks) do
+            pc(function() l:Disconnect() end)
+        end
+        table.clear(STATE.SwapLinks)
+        STATE.SwapOriginal = nil
+        STATE.SwapClone    = nil
+
+        local c2 = LocalPlayer.Character
+        if c2 and hum.Parent == nil then
+            hum.Parent = c2
+            pc(function() workspace.CurrentCamera.CameraSubject = hum end)
+        end
+
+        pc(function() clone:Destroy() end)
+        hum.Health = 0
+    end))
+end
+
+function ShieldSwap.Active()
+    local char = LocalPlayer.Character
+    return STATE.SwapClone ~= nil
+       and char ~= nil
+       and STATE.SwapClone.Parent == char
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ SHIELD — método 2: "Disable Monitor"                          ║
+-- ║ Desabilita Heartbeats cujo source contém "UGI" (movement lock)║
+-- ╚══════════════════════════════════════════════════════════════╝
+local ShieldMon = {}
+
+function ShieldMon.Disable()
+    if type(getconnections) ~= "function" then return end
+    for _, sig in ipairs({RunService.Heartbeat, RunService.PreSimulation, RunService.PostSimulation}) do
+        local ok, conns = pcall(getconnections, sig)
+        if not ok or type(conns) ~= "table" then continue end
+
+        for _, conn in ipairs(conns) do
+            local ok2, fn = pcall(function() return conn.Function end)
+            if ok2 and type(fn) == "function" then
+                local ok3, src = pcall(debug.info, fn, "s")
+                if ok3 and string.find(tostring(src), "UGI", 1, true) then
+                    local ok4, enabled = pcall(function() return conn.Enabled end)
+                    if not ok4 or enabled ~= false then
+                        if pcall(function() conn:Disable() end) then
+                            table.insert(STATE.MonDisabled, conn)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+function ShieldMon.Enable()
+    for _, conn in ipairs(STATE.MonDisabled) do
+        pc(function() conn:Enable() end)
+    end
+    table.clear(STATE.MonDisabled)
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ SHIELD — controlador central                                  ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function ShieldStart()
+    if CONFIG.Shield == "Off" then return end
+    if STATE.SwapConn then return end
+
+    local function tick()
+        if STATE.ShieldPaused then return end
+        if CONFIG.Shield == "Humanoid Swap" then
+            ShieldSwap.Swap()
+        else
+            ShieldMon.Disable()
+        end
+    end
+
+    tick()
+    local acc = 0
+    STATE.SwapConn = RunService.Heartbeat:Connect(function(dt)
+        acc += dt
+        local interval = CONFIG.Shield == "Humanoid Swap" and 0.25 or 3
+        if acc >= interval then
+            acc = 0
+            tick()
+        end
+    end)
+end
+
+local function ShieldStop()
+    if STATE.SwapConn then
+        pc(function() STATE.SwapConn:Disconnect() end)
+        STATE.SwapConn = nil
+    end
+    ShieldSwap.Undo()
+    ShieldMon.Enable()
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ GOD MODE                                                      ║
+-- ║ States desabilitados + CanCollide false + BreakJointsOnDeath  ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local GOD_STATES = {
+    Enum.HumanoidStateType.FallingDown,
+    Enum.HumanoidStateType.Ragdoll,
+    Enum.HumanoidStateType.Physics,
+    Enum.HumanoidStateType.Seated,
+    Enum.HumanoidStateType.PlatformStanding,
+}
+
+local function GodOn()
+    if STATE.GodOn then return end
+    STATE.GodOn = true
+
+    local char = LocalPlayer.Character
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not char or not hum then return end
+
+    for _, s in ipairs(GOD_STATES) do
+        pc(function() hum:SetStateEnabled(s, false) end)
+    end
+    pc(function() hum.BreakJointsOnDeath = false end)
+
+    for _, d in ipairs(char:GetDescendants()) do
+        if d:IsA("BasePart") and STATE.GodCollides[d] == nil then
+            STATE.GodCollides[d] = d.CanCollide
+            pc(function() d.CanCollide = false end)
+        end
+    end
+end
+
+local function GodOff()
+    if not STATE.GodOn then return end
+    STATE.GodOn = false
+
+    local char = LocalPlayer.Character
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        for _, s in ipairs(GOD_STATES) do
+            pc(function() hum:SetStateEnabled(s, true) end)
+        end
+    end
+
+    for part, can in pairs(STATE.GodCollides) do
+        if part and part.Parent then
+            pc(function() part.CanCollide = can end)
+        end
+    end
+    table.clear(STATE.GodCollides)
+end
+
+local function GodTick()
+    local hum = GetHumanoid()
+    if hum and hum.Health > 0 and hum.Health < hum.MaxHealth then
+        pc(function() hum.Health = hum.MaxHealth end)
+    end
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ ANTI RAGDOLL                                                  ║
+-- ║ RemoteEvent + RagdollEndTime + scan de Constraints            ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function IsRagdolled()
+    -- 1) attribute RagdollEndTime
+    local num = tonumber(LocalPlayer:GetAttribute("RagdollEndTime"))
+    if num and num > workspace:GetServerTimeNow() then return true end
+
+    -- 2) estado do humanoid
+    local hum = GetHumanoid()
+    if hum then
+        local st = hum:GetState()
+        return st == Enum.HumanoidStateType.Physics
+            or st == Enum.HumanoidStateType.Ragdoll
+            or st == Enum.HumanoidStateType.FallingDown
+    end
+    return false
+end
+
+local function ClearRagdoll()
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    -- 1) destrói constraints de ragdoll
+    for _, d in ipairs(char:GetDescendants()) do
+        if d.ClassName == "BallSocketConstraint"
+        or d.ClassName == "NoCollisionConstraint"
+        or d.ClassName == "HingeConstraint" then
+            pc(function() d:Destroy() end)
+        end
+    end
+
+    -- 2) re-habilita juntas
+    for _, d in ipairs(char:GetDescendants()) do
+        if (d:IsA("Motor6D") or d:IsA("AnimationConstraint")) and not d.Enabled then
+            pc(function() d.Enabled = true end)
+        end
+    end
+
+    -- 3) força Running
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pc(function()
+            if hum.PlatformStand then hum.PlatformStand = false end
+            hum:ChangeState(Enum.HumanoidStateType.Running)
+        end)
+    end
+
+    -- 4) reseta camera subject
+    local cam = workspace.CurrentCamera
+    if cam and hum and cam.CameraSubject ~= hum then
+        pc(function() cam.CameraSubject = hum end)
+    end
+end
+
+local function StartAntiRagdoll()
+    if not CONFIG.AntiRagdoll then return end
+
+    -- hook no RemoteEvent de ragdoll (se existir)
+    local remote = ReplicatedStorage:FindFirstChild("Packages")
+    remote = remote and remote:FindFirstChild("Networking")
+    remote = remote and remote:FindFirstChild("RE/Ragdoll/ClientRagdoll")
+    if remote and remote:IsA("RemoteEvent") then
+        table.insert(STATE.AntiRagLinks, remote.OnClientEvent:Connect(function()
+            task.defer(function()
+                ClearRagdoll()
+                STATE.AntiRagLast = os.clock()
+            end)
+        end))
+    end
+
+    -- escuta attribute RagdollEndTime
+    table.insert(STATE.AntiRagLinks,
+        LocalPlayer:GetAttributeChangedSignal("RagdollEndTime"):Connect(function()
+            local num = tonumber(LocalPlayer:GetAttribute("RagdollEndTime"))
+            if num and num > workspace:GetServerTimeNow() then
+                STATE.AntiRagLast = os.clock()
+                task.defer(ClearRagdoll)
+            end
+        end))
+
+    -- monitor contínuo
+    STATE.AntiRagConn = RunService.Heartbeat:Connect(function()
+        if IsRagdolled() then
+            if os.clock() - STATE.AntiRagLast > 0.15 then
+                STATE.AntiRagLast = os.clock()
+                ClearRagdoll()
+            end
+        end
+    end)
+end
+
+local function StopAntiRagdoll()
+    for _, l in ipairs(STATE.AntiRagLinks) do
+        pc(function() l:Disconnect() end)
+    end
+    table.clear(STATE.AntiRagLinks)
+
+    if STATE.AntiRagConn then
+        pc(function() STATE.AntiRagConn:Disconnect() end)
+        STATE.AntiRagConn = nil
+    end
+end
+--[[ Chilli FlyTo GUI — 3/5
+     FlyTo: Heartbeat (CFrame) + PreSimulation (Velocity c/ gravidade)
+            com anti-stuck (padrão Chilli fn20)
+     Anti Guard Hook: se tomar ragdoll no voo, teleporta pro alvo
+     Funções globais (sem 'local') pra Parte 5 poder fazer patch.
+]]
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ ANTI GUARD HOOK                                               ║
+-- ║ Arma listener de RagdollEndTime. Se o player tomar ragdoll    ║
+-- ║ durante o voo, teletransporta direto pro destino.             ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function ArmHitTeleport(destination)
+    if not CONFIG.AntiGuardHook then return end
+
+    STATE.HitArms      += 1
+    STATE.HitArmedAt    = os.clock()
+    STATE.PendingTarget = destination
+
+    local landed = false
+    local link
+    link = LocalPlayer:GetAttributeChangedSignal("RagdollEndTime"):Connect(function()
+        if landed then return end
+
+        local num = tonumber(LocalPlayer:GetAttribute("RagdollEndTime"))
+        if not num or num <= workspace:GetServerTimeNow() then return end
+
+        local hrp = GetRoot()
+        if not hrp then return end
+
+        landed = true
+        pc(function() link:Disconnect() end)
+
+        pc(function()
+            hrp.CFrame = CFrame.new(destination)
+            hrp.AssemblyLinearVelocity  = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero
+        end)
+
+        STATE.PendingTarget = nil
+        STATE.HitArms = math.max(0, STATE.HitArms - 1)
+    end)
+
+    task.delay(CONFIG.HitArmsTimeout, function()
+        if not landed then
+            pc(function() link:Disconnect() end)
+            STATE.HitArms = math.max(0, STATE.HitArms - 1)
+        end
+    end)
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ STOP FLIGHT                                                   ║
+-- ╚══════════════════════════════════════════════════════════════╝
+function StopFlight()
+    STATE.CancelFlag = true
+
+    if STATE.HB then
+        pc(function() STATE.HB:Disconnect() end)
+        STATE.HB = nil
+    end
+    if STATE.Pre then
+        pc(function() STATE.Pre:Disconnect() end)
+        STATE.Pre = nil
+    end
+    if STATE.GodConn then
+        pc(function() STATE.GodConn:Disconnect() end)
+        STATE.GodConn = nil
+    end
+
+    pc(function()
+        local hrp = GetRoot()
+        if hrp then
+            hrp.AssemblyLinearVelocity  = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero
+        end
+    end)
+
+    STATE.Flying = false
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ FLYTO (versão base — Parte 5 vai sobrescrever)                ║
+-- ║ 3 etapas: subir → deslocar → descer                            ║
+-- ║ Heartbeat    → CFrame + rotação preservada                     ║
+-- ║ PreSimulation → Velocity com gravidade compensada              ║
+-- ║ Anti-stuck: se travar por 0.4s, nudge manual via CFrame        ║
+-- ╚══════════════════════════════════════════════════════════════╝
+function FlyTo(targetPos)
+    if STATE.Flying then return false, "já voando" end
+    if typeof(targetPos) ~= "Vector3" then return false, "posição inválida" end
+
+    local hrp, char = GetRoot()
+    if not hrp or not char then return false, "sem character" end
+
+    -- trava ownership (evita conflito com outros sistemas)
+    if not ClaimMovement("flyto") then
+        return false, "movement ocupado: " .. tostring(STATE.MoveOwner)
+    end
+
+    STATE.Flying     = true
+    STATE.CancelFlag = false
+
+    -- liga bypasses
+    if CONFIG.GodMode then GodOn() end
+    StartAntiRagdoll()
+    ShieldStart()
+
+    local speed     = CONFIG.FlySpeed
+    local height    = CONFIG.FlyHeight
+    local arrive    = CONFIG.ArriveRadius
+    local timeoutAt = os.clock() + CONFIG.Timeout
+
+    -- posição-alvo elevada (+FlyHeight no Y)
+    local elevated = Vector3.new(targetPos.X, targetPos.Y + height, targetPos.Z)
+
+    -- espera sair do ragdoll antes de começar
+    local startWait = os.clock()
+    while os.clock() - startWait < CONFIG.RagdollWaitMax do
+        if not IsRagdolled() then break end
+        RunService.Heartbeat:Wait()
+
+        hrp, char = GetRoot()
+        if not hrp then
+            StopFlight()
+            ReleaseMovement("flyto")
+            return false, "perdeu character"
+        end
+    end
+
+    -- uneequip tools (tool reseta CFrame)
+    pc(function()
+        local hum = GetHumanoid()
+        if hum then hum:UnequipTools() end
+    end)
+
+    -- arma hook de hit no alvo final
+    ArmHitTeleport(targetPos)
+
+    -- ── TRAJETÓRIA 3 ETAPAS ───────────────────────────────────
+    local stages = {
+        Vector3.new(hrp.Position.X, elevated.Y, hrp.Position.Z),  -- 1) subir
+        elevated,                                                  -- 2) mover
+        targetPos,                                                 -- 3) descer
+    }
+
+    local stageIndex  = 1
+    local currentGoal = stages[1]
+    local velCtx      = {}  -- contexto do anti-stuck
+
+    -- ── HEARTBEAT: CFrame ─────────────────────────────────────
+    STATE.HB = RunService.Heartbeat:Connect(function(dt)
+        if STATE.CancelFlag then StopFlight(); return end
+        if os.clock() > timeoutAt then StopFlight(); return end
+
+        local root = GetRoot()
+        if not root then StopFlight(); return end
+        if root.Parent ~= char then StopFlight(); return end
+
+        local delta = currentGoal - root.Position
+        local mag   = delta.Magnitude
+
+        -- chegou na etapa → avança
+        if mag <= arrive then
+            stageIndex += 1
+            if stageIndex > #stages then
+                pc(function()
+                    root.AssemblyLinearVelocity  = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                end)
+                StopFlight()
+                return
+            end
+            currentGoal = stages[stageIndex]
+            return
+        end
+
+        -- move
+        local step   = math.min(speed * dt, mag)
+        local newPos = root.Position + delta.Unit * step
+
+        pc(function()
+            local rot = root.CFrame.Rotation
+            root.CFrame = CFrame.new(newPos) * rot
+            root.AssemblyLinearVelocity  = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end)
+
+    -- ── PRESIMULATION: Velocity com gravidade compensada ──────
+    STATE.Pre = RunService.PreSimulation:Connect(function(dt)
+        if STATE.CancelFlag then return end
+
+        local root = GetRoot()
+        if not root then return end
+
+        local delta = currentGoal - root.Position
+        local mag   = delta.Magnitude
+
+        -- anti-stuck
+        if mag > 2 then
+            if not velCtx.mark then
+                velCtx.mark  = mag
+                velCtx.clock = 0
+            end
+            velCtx.clock += dt
+            if velCtx.clock >= 0.4 then
+                if velCtx.mark - mag < 0.5 then
+                    pc(function()
+                        root.CFrame = root.CFrame + delta.Unit * math.min(mag, speed * dt)
+                    end)
+                end
+                velCtx.mark  = mag
+                velCtx.clock = 0
+            end
+        else
+            velCtx.mark = nil
+        end
+
+        -- velocidade direcional
+        local n = math.max(dt, 0.004166666666666667)
+        local v = Vector3.zero
+        if mag > 0.01 then
+            v = delta.Unit * math.min(speed, mag / n)
+        end
+
+        -- + gravidade compensada (evita cair)
+        local finalVel = v + Vector3.new(0, workspace.Gravity * n * 0.5, 0)
+
+        pc(function()
+            root.AssemblyLinearVelocity  = finalVel
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end)
+
+    -- god tick durante o voo
+    if CONFIG.GodMode then
+        STATE.GodConn = RunService.Heartbeat:Connect(GodTick)
+    end
+
+    return true
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ CLEANUP FLIGHT                                                ║
+-- ╚══════════════════════════════════════════════════════════════╝
+function CleanupFlight()
+    StopFlight()
+    GodOff()
+    ShieldStop()
+    StopAntiRagdoll()
+    ReleaseMovement("flyto")
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ GO TO SAVED                                                   ║
+-- ╚══════════════════════════════════════════════════════════════╝
+function GoToSaved(name)
+    local e = STATE.Saved[name]
+    if not e then return false, "não encontrado" end
+    return FlyTo(Vector3.new(e.x, e.y, e.z))
+end
+--[[ Chilli FlyTo GUI — 4/5
+     UI completa (arrastável, minimizável, lista de saves com Ir/X)
+     Boot + auto-cleanup global
+]]
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ UI HELPERS                                                    ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function GetParentGui()
+    local ok, hui = pcall(function() return gethui and gethui() end)
+    if ok and typeof(hui) == "Instance" then return hui end
+    return CoreGui
+end
+
+local COLORS = {
+    bg      = Color3.fromRGB(20, 20, 26),
+    panel   = Color3.fromRGB(30, 30, 38),
+    stroke  = Color3.fromRGB(60, 60, 74),
+    accent  = Color3.fromRGB(255, 110, 90),
+    accent2 = Color3.fromRGB(255, 170, 90),
+    text    = Color3.fromRGB(240, 240, 245),
+    sub     = Color3.fromRGB(150, 150, 165),
+    item    = Color3.fromRGB(38, 38, 48),
+    good    = Color3.fromRGB(80, 210, 130),
+    bad     = Color3.fromRGB(235, 85, 85),
+}
+
+local function Make(cls, props, parent)
+    local i = Instance.new(cls)
+    for k, v in pairs(props or {}) do
+        pc(function() i[k] = v end)
+    end
+    if parent then i.Parent = parent end
+    return i
+end
+
+local function AddCorner(i, r)
+    Make("UICorner", { CornerRadius = UDim.new(0, r or 8) }, i)
+end
+
+local function AddStroke(i, color, t, tr)
+    return Make("UIStroke", {
+        Color = color or COLORS.stroke,
+        Thickness = t or 1,
+        Transparency = tr or 0,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    }, i)
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ BUILD GUI                                                     ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function BuildGui()
+    local parent = GetParentGui()
+
+    local gui = Make("ScreenGui", {
+        Name = "ChilliFlyTo_" .. tostring(math.random(1, 1e6)),
+        ResetOnSpawn = false,
+        IgnoreGuiInset = true,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+        DisplayOrder = 5000,
+    }, parent)
+
+    local main = Make("Frame", {
+        Size = UDim2.fromOffset(300, 420),
+        Position = UDim2.new(0, 40, 0, 120),
+        BackgroundColor3 = COLORS.bg,
+        BorderSizePixel = 0,
+        Active = true,
+    }, gui)
+    AddCorner(main, 12)
+    AddStroke(main, COLORS.stroke, 1.5, 0.2)
+
+    Make("UIGradient", {
+        Color = ColorSequence.new(COLORS.bg, Color3.fromRGB(14, 14, 18)),
+        Rotation = 90,
+    }, main)
+
+    -- ── HEADER ────────────────────────────────────────────────
+    local header = Make("Frame", {
+        Size = UDim2.new(1, 0, 0, 38),
+        BackgroundColor3 = COLORS.panel,
+        BorderSizePixel = 0,
+    }, main)
+    AddCorner(header, 12)
+    Make("Frame", {
+        Size = UDim2.new(1, 0, 0, 12),
+        Position = UDim2.new(0, 0, 1, -12),
+        BackgroundColor3 = COLORS.panel,
+        BorderSizePixel = 0,
+    }, header)
+
+    local title = Make("TextLabel", {
+        Size = UDim2.new(1, -60, 1, 0),
+        Position = UDim2.new(0, 12, 0, 0),
+        BackgroundTransparency = 1,
+        Text = "Chilli FlyTo — Full Bypass",
+        TextColor3 = COLORS.text,
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    }, header)
+    Make("UIGradient", {
+        Color = ColorSequence.new(COLORS.accent, COLORS.accent2),
+        Rotation = 0,
+    }, title)
+
+    local minBtn = Make("TextButton", {
+        Size = UDim2.fromOffset(28, 28),
+        Position = UDim2.new(1, -34, 0.5, -14),
+        BackgroundColor3 = COLORS.item,
+        BorderSizePixel = 0,
+        Text = "—",
+        TextColor3 = COLORS.text,
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+        AutoButtonColor = false,
+    }, header)
+    AddCorner(minBtn, 6)
+
+    -- ── BODY ──────────────────────────────────────────────────
+    local body = Make("Frame", {
+        Size = UDim2.new(1, -20, 1, -50),
+        Position = UDim2.new(0, 10, 0, 44),
+        BackgroundTransparency = 1,
+    }, main)
+
+    -- save row
+    local saveRow = Make("Frame", {
+        Size = UDim2.new(1, 0, 0, 30),
+        BackgroundTransparency = 1,
+    }, body)
+
+    local nameBox = Make("TextBox", {
+        Size = UDim2.new(1, -80, 1, 0),
+        BackgroundColor3 = COLORS.item,
+        BorderSizePixel = 0,
+        Text = "",
+        PlaceholderText = "nome da posição...",
+        PlaceholderColor3 = COLORS.sub,
+        TextColor3 = COLORS.text,
+        Font = Enum.Font.Gotham,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ClearTextOnFocus = false,
+    }, saveRow)
+    AddCorner(nameBox, 6)
+    AddStroke(nameBox, COLORS.stroke, 1, 0.4)
+    Make("UIPadding", {
+        PaddingLeft = UDim.new(0, 8),
+        PaddingRight = UDim.new(0, 8),
+    }, nameBox)
+
+    local saveBtn = Make("TextButton", {
+        Size = UDim2.fromOffset(72, 30),
+        Position = UDim2.new(1, -72, 0, 0),
+        BackgroundColor3 = COLORS.accent,
+        BorderSizePixel = 0,
+        Text = "Salvar",
+        TextColor3 = Color3.new(1, 1, 1),
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        AutoButtonColor = false,
+    }, saveRow)
+    AddCorner(saveBtn, 6)
+
+    -- controls row
+    local ctrlRow = Make("Frame", {
+        Size = UDim2.new(1, 0, 0, 26),
+        Position = UDim2.new(0, 0, 0, 36),
+        BackgroundTransparency = 1,
+    }, body)
+
+    Make("TextLabel", {
+        Size = UDim2.new(0, 70, 1, 0),
+        BackgroundTransparency = 1,
+        Text = "Velocidade",
+        TextColor3 = COLORS.sub,
+        Font = Enum.Font.Gotham,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    }, ctrlRow)
+
+    local speedBox = Make("TextBox", {
+        Size = UDim2.new(0, 60, 1, 0),
+        Position = UDim2.new(0, 72, 0, 0),
+        BackgroundColor3 = COLORS.item,
+        BorderSizePixel = 0,
+        Text = tostring(CONFIG.FlySpeed),
+        TextColor3 = COLORS.text,
+        Font = Enum.Font.Gotham,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Center,
+    }, ctrlRow)
+    AddCorner(speedBox, 6)
+
+    local stopBtn = Make("TextButton", {
+        Size = UDim2.new(0, 60, 1, 0),
+        Position = UDim2.new(1, -60, 0, 0),
+        BackgroundColor3 = COLORS.bad,
+        BorderSizePixel = 0,
+        Text = "Parar",
+        TextColor3 = Color3.new(1, 1, 1),
+        Font = Enum.Font.GothamBold,
+        TextSize = 12,
+        AutoButtonColor = false,
+    }, ctrlRow)
+    AddCorner(stopBtn, 6)
+
+    -- status
+    local statusLbl = Make("TextLabel", {
+        Size = UDim2.new(1, 0, 0, 18),
+        Position = UDim2.new(0, 0, 0, 68),
+        BackgroundTransparency = 1,
+        Text = "Pronto",
+        TextColor3 = COLORS.sub,
+        Font = Enum.Font.Gotham,
+        TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    }, body)
+
+    -- list
+    local listFrame = Make("ScrollingFrame", {
+        Size = UDim2.new(1, 0, 1, -92),
+        Position = UDim2.new(0, 0, 0, 92),
+        BackgroundColor3 = COLORS.panel,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 4,
+        ScrollBarImageColor3 = COLORS.accent,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    }, body)
+    AddCorner(listFrame, 8)
+    AddStroke(listFrame, COLORS.stroke, 1, 0.4)
+
+    Make("UIListLayout", {
+        Padding = UDim.new(0, 4),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    }, listFrame)
+    Make("UIPadding", {
+        PaddingTop = UDim.new(0, 6),
+        PaddingBottom = UDim.new(0, 6),
+        PaddingLeft = UDim.new(0, 6),
+        PaddingRight = UDim.new(0, 6),
+    }, listFrame)
+
+    -- ══════════════════════════════════════════════════════════
+    -- LÓGICA DA UI
+    -- ══════════════════════════════════════════════════════════
+    local function SetStatus(txt, color)
+        pc(function()
+            statusLbl.Text = txt
+            statusLbl.TextColor3 = color or COLORS.sub
+        end)
+    end
+    STATE.SetStatus = SetStatus  -- expõe pra Parte 5
+
+    speedBox.FocusLost:Connect(function()
+        pc(function()
+            local n = tonumber(speedBox.Text)
+            if n and n > 10 then
+                CONFIG.FlySpeed = math.clamp(n, 10, 2000)
+                speedBox.Text = tostring(CONFIG.FlySpeed)
+                SetStatus("Velocidade: " .. CONFIG.FlySpeed, COLORS.good)
+            else
+                speedBox.Text = tostring(CONFIG.FlySpeed)
+            end
+        end)
+    end)
+
+    saveBtn.MouseButton1Click:Connect(function()
+        pc(function()
+            local ok, err = SaveCurrent(nameBox.Text)
+            if ok then
+                nameBox.Text = ""
+                SetStatus("Salvo!", COLORS.good)
+                RefreshList()
+            else
+                SetStatus("Erro: " .. tostring(err), COLORS.bad)
+            end
+        end)
+    end)
+
+    stopBtn.MouseButton1Click:Connect(function()
+        pc(function()
+            if STATE.Flying then
+                CleanupFlight()
+                SetStatus("Cancelado", COLORS.bad)
+            else
+                SetStatus("Nada pra parar", COLORS.sub)
+            end
+        end)
+    end)
+
+    -- ── LISTA ─────────────────────────────────────────────────
+    RefreshList = function()
+        pc(function()
+            -- limpa
+            for _, c in ipairs(listFrame:GetChildren()) do
+                if c:IsA("Frame") then c:Destroy() end
+            end
+
+            local names = {}
+            for n in pairs(STATE.Saved) do
+                table.insert(names, n)
+            end
+            table.sort(names)
+
+            for i, name in ipairs(names) do
+                local row = Make("Frame", {
+                    Size = UDim2.new(1, 0, 0, 32),
+                    BackgroundColor3 = COLORS.item,
+                    BorderSizePixel = 0,
+                    LayoutOrder = i,
+                }, listFrame)
+                AddCorner(row, 6)
+
+                Make("TextLabel", {
+                    Size = UDim2.new(1, -96, 1, 0),
+                    Position = UDim2.new(0, 8, 0, 0),
+                    BackgroundTransparency = 1,
+                    Text = name,
+                    TextColor3 = COLORS.text,
+                    Font = Enum.Font.Gotham,
+                    TextSize = 12,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                }, row)
+
+                local goBtn = Make("TextButton", {
+                    Size = UDim2.fromOffset(40, 24),
+                    Position = UDim2.new(1, -90, 0.5, -12),
+                    BackgroundColor3 = COLORS.good,
+                    BorderSizePixel = 0,
+                    Text = "Ir",
+                    TextColor3 = Color3.new(1, 1, 1),
+                    Font = Enum.Font.GothamBold,
+                    TextSize = 11,
+                    AutoButtonColor = false,
+                }, row)
+                AddCorner(goBtn, 5)
+
+                local delBtn = Make("TextButton", {
+                    Size = UDim2.fromOffset(40, 24),
+                    Position = UDim2.new(1, -46, 0.5, -12),
+                    BackgroundColor3 = COLORS.bad,
+                    BorderSizePixel = 0,
+                    Text = "X",
+                    TextColor3 = Color3.new(1, 1, 1),
+                    Font = Enum.Font.GothamBold,
+                    TextSize = 11,
+                    AutoButtonColor = false,
+                }, row)
+                AddCorner(delBtn, 5)
+
+                goBtn.MouseButton1Click:Connect(function()
+                    pc(function()
+                        if STATE.Flying then
+                            SetStatus("Já voando — clique Parar", COLORS.bad)
+                            return
+                        end
+                        SetStatus("Voando para " .. name .. "...", COLORS.accent2)
+                        local ok, err = GoToSaved(name)
+                        if not ok then
+                            SetStatus("Erro: " .. tostring(err), COLORS.bad)
+                        end
+                    end)
+                end)
+
+                delBtn.MouseButton1Click:Connect(function()
+                    pc(function()
+                        STATE.Saved[name] = nil
+                        PersistSaved()
+                        RefreshList()
+                        SetStatus("Removido: " .. name, COLORS.sub)
+                    end)
+                end)
+            end
+
+            if #names == 0 then
+                Make("TextLabel", {
+                    Size = UDim2.new(1, 0, 0, 30),
+                    BackgroundTransparency = 1,
+                    Text = "Nenhuma posição salva ainda.",
+                    TextColor3 = COLORS.sub,
+                    Font = Enum.Font.Gotham,
+                    TextSize = 11,
+                }, listFrame)
+            end
+        end)
+    end
+
+    -- ── MINIMIZAR ─────────────────────────────────────────────
+    local minimized = false
+    local origSize = main.Size
+
+    minBtn.MouseButton1Click:Connect(function()
+        pc(function()
+            minimized = not minimized
+            if minimized then
+                main.Size = UDim2.fromOffset(300, 38)
+                body.Visible = false
+                minBtn.Text = "+"
+            else
+                main.Size = origSize
+                body.Visible = true
+                minBtn.Text = "—"
+            end
+        end)
+    end)
+
+    -- ── DRAG ──────────────────────────────────────────────────
+    local dragging, dragInput, dragStart, startPos
+
+    local function updateDrag(input)
+        pc(function()
+            local delta = input.Position - dragStart
+            main.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end)
+    end
+
+    header.InputBegan:Connect(function(input)
+        pc(function()
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                dragging  = true
+                dragStart = input.Position
+                startPos  = main.Position
+
+                input.Changed:Connect(function()
+                    if input.UserInputState == Enum.UserInputState.End then
+                        dragging = false
+                    end
+                end)
+            end
+        end)
+    end)
+
+    header.InputChanged:Connect(function(input)
+        pc(function()
+            if input.UserInputType == Enum.UserInputType.MouseMovement
+                or input.UserInputType == Enum.UserInputType.Touch then
+                dragInput = input
+            end
+        end)
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        pc(function()
+            if dragging and input == dragInput then
+                updateDrag(input)
+            end
+        end)
+    end)
+
+    STATE.Gui = gui
+    return gui
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ BOOT                                                          ║
+-- ╚══════════════════════════════════════════════════════════════╝
+LoadSaved()
+
+-- cleanup de instância anterior (se colar 2x)
+if _G.__ChilliFlyToCleanup then
+    pc(_G.__ChilliFlyToCleanup)
+end
+
+-- declara RefreshList como global antes de BuildGui usar
+RefreshList = RefreshList or function() end
+
+BuildGui()
+RefreshList()
+
+-- ── RESPAWN HANDLER ───────────────────────────────────────────
+LocalPlayer.CharacterAdded:Connect(function()
+    if STATE.Flying then
+        CleanupFlight()
+    end
+    task.defer(function()
+        if CONFIG.GodMode and STATE.Flying then GodOn() end
+    end)
+end)
+
+-- ── CLEANUP GLOBAL ────────────────────────────────────────────
+_G.__ChilliFlyToCleanup = function()
+    pc(CleanupFlight)
+
+    if STATE.SwapConn then
+        pc(function() STATE.SwapConn:Disconnect() end)
+        STATE.SwapConn = nil
+    end
+
+    if STATE.Gui then
+        pc(function() STATE.Gui:Destroy() end)
+        STATE.Gui = nil
+    end
+
+    STATE.Flying = false
+    STATE.MoveOwner = nil
+end
+--[[ Chilli FlyTo GUI — 5A/7 (CORRIGIDO: freeze real sem deslize)
+     Setup do ciclo de drop (400 studs)
+     FreezeRoot/UnfreezeRoot: Âncora temporária pra impedir
+     qualquer deslize residual no instante da parada.
+]]
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ CONFIG EXTRA                                                  ║
+-- ╚══════════════════════════════════════════════════════════════╝
+CONFIG.DropEveryStuds    = 400
+CONFIG.DropPauseTime     = 1.0
+CONFIG.PromptWaitTime    = 45
+CONFIG.PromptDetectRange = 14
+CONFIG.EnableDropCycle   = true
+CONFIG.AllowManual       = true
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ STATE EXTRA                                                   ║
+-- ╚══════════════════════════════════════════════════════════════╝
+STATE.DropCycle = {
+    Active       = false,
+    WaitPrompt   = false,
+    WaitResolve  = nil,
+    Prompts      = {},
+    LastUID      = nil,
+    PromptsDone  = {},
+    Count        = 0,
+    GlobalConn   = nil,
+    FrozenParts  = {},   -- parts que foram ancoradas temporariamente
+}
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ FREEZE / UNFREEZE                                             ║
+-- ║ Ancora TODAS as BaseParts do char. Isso congela 100% — nem   ║
+-- ║ física nem velocity residual movem o char.                    ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function FreezeRoot()
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    -- limpa tabela antes
+    table.clear(STATE.DropCycle.FrozenParts)
+
+    -- salva o estado original e ancora cada part
+    for _, d in ipairs(char:GetDescendants()) do
+        if d:IsA("BasePart") then
+            local prev = {
+                Anchored            = d.Anchored,
+                CanCollide          = d.CanCollide,
+                AssemblyLinearVel   = nil,
+                AssemblyAngularVel  = nil,
+            }
+            pcall(function()
+                prev.AssemblyLinearVel  = d.AssemblyLinearVelocity
+                prev.AssemblyAngularVel = d.AssemblyAngularVelocity
+            end)
+            STATE.DropCycle.FrozenParts[d] = prev
+
+            pc(function()
+                d.AssemblyLinearVelocity  = Vector3.zero
+                d.AssemblyAngularVelocity = Vector3.zero
+                d.Anchored                = true
+            end)
+        end
+    end
+
+    -- trava o HumanoidRootPart por último (garantia)
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        pc(function()
+            hrp.AssemblyLinearVelocity  = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero
+            hrp.Anchored                = true
+        end)
+    end
+end
+
+local function UnfreezeRoot()
+    for part, prev in pairs(STATE.DropCycle.FrozenParts) do
+        if part and part.Parent then
+            pc(function()
+                part.Anchored   = prev.Anchored
+                part.CanCollide = prev.CanCollide
+                if prev.AssemblyLinearVel then
+                    part.AssemblyLinearVelocity  = prev.AssemblyLinearVel
+                end
+                if prev.AssemblyAngularVel then
+                    part.AssemblyAngularVelocity = prev.AssemblyAngularVel
+                end
+            end)
+        end
+    end
+    table.clear(STATE.DropCycle.FrozenParts)
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ EGG STATE REF                                                 ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function GetEggState()
+    local ok, mod = pcall(function()
+        return require(game:GetService("ReplicatedStorage").Client.EggState)
+    end)
+    if ok and type(mod) == "table" then return mod end
+
+    local rs     = game:GetService("ReplicatedStorage")
+    local client = rs:FindFirstChild("Client")
+    local mod    = client and client:FindFirstChild("EggState")
+    if mod and mod:IsA("ModuleScript") then
+        local ok2, mod2 = pcall(require, mod)
+        if ok2 and type(mod2) == "table" then return mod2 end
+    end
+    return nil
+end
+
+local function DropFieldEgg(reason)
+    local es = GetEggState()
+    if not es or type(es.DropFieldEgg) ~= "function" then
+        return false
+    end
+    return pcall(es.DropFieldEgg, reason or "PlayerRequest")
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ PROMPT DISCOVERY                                              ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function FindNearestCarryPrompt(range)
+    range = range or CONFIG.PromptDetectRange
+    local hrp = GetRoot()
+    if not hrp then return nil, nil, nil end
+
+    local bestPrompt, bestPart, bestDist = nil, nil, range
+
+    for _, child in ipairs(workspace:GetChildren()) do
+        if child.Name == "SmartPromptPart" and child:IsA("BasePart") then
+            local cap = child:FindFirstChild("CarryAreaEgg")
+            if cap and cap:IsA("ProximityPrompt") then
+                local d = (child.Position - hrp.Position).Magnitude
+                if d < bestDist then
+                    bestDist   = d
+                    bestPrompt = cap
+                    bestPart   = child
+                end
+            end
+        end
+    end
+
+    return bestPrompt, bestPart, bestDist
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ UID EXTRACTION                                                ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function ExtractUIDFromPrompt(prompt, part)
+    local uid = nil
+
+    if prompt then
+        pcall(function()
+            uid = prompt:GetAttribute("Uid")
+                or prompt:GetAttribute("UID")
+                or prompt:GetAttribute("EggUid")
+        end)
+    end
+    if not uid and part then
+        pcall(function()
+            uid = part:GetAttribute("Uid")
+                or part:GetAttribute("UID")
+                or part:GetAttribute("EggUid")
+                or part:GetAttribute("Owner")
+        end)
+    end
+    if not uid and part then
+        local parent = part.Parent
+        if parent then
+            local n = parent.Name
+            if string.find(n, "FirstAreaEgg_") or #n > 20 then
+                uid = n
+            end
+        end
+    end
+
+    return uid and tostring(uid) or nil
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ RECORD PROMPT                                                 ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function RecordPrompt(prompt, part, dist, source)
+    local realUid = ExtractUIDFromPrompt(prompt, part) or ("anon_" .. tostring(os.time()))
+
+    STATE.DropCycle.Prompts[tostring(realUid)] = {
+        Prompt   = prompt,
+        Part     = part,
+        SavedAt  = os.clock(),
+        Name     = prompt and prompt.Name or "?",
+        Distance = dist,
+        Source   = source or "auto",
+    }
+    STATE.DropCycle.LastUID = tostring(realUid)
+    STATE.DropCycle.PromptsDone[tostring(realUid)] = true
+
+    print(string.format("[FlyTo] Prompt salvo (%s) → UID: %s  (%.1f studs)",
+        source or "auto", tostring(realUid), dist or 0))
+
+    return realUid
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ LISTENER GLOBAL — manual                                      ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function StartGlobalPromptListener()
+    if STATE.DropCycle.GlobalConn then return end
+
+    STATE.DropCycle.GlobalConn = ProximityPromptService.PromptTriggered:Connect(function(prompt, player)
+        if player ~= LocalPlayer then return end
+        if not CONFIG.AllowManual then return end
+        if not STATE.DropCycle.WaitPrompt then return end
+        if prompt.Name ~= "CarryAreaEgg" then return end
+
+        local part = prompt.Parent
+        if part and part.Name ~= "SmartPromptPart" then
+            part = part.Parent
+        end
+
+        local hrp = GetRoot()
+        local dist = 0
+        if hrp and part and part:IsA("BasePart") then
+            dist = (part.Position - hrp.Position).Magnitude
+        end
+
+        RecordPrompt(prompt, part, dist, "manual")
+
+        if STATE.DropCycle.WaitResolve then
+            local resolve = STATE.DropCycle.WaitResolve
+            STATE.DropCycle.WaitResolve = nil
+            pc(resolve)
+        end
+    end)
+end
+
+local function StopGlobalPromptListener()
+    if STATE.DropCycle.GlobalConn then
+        pc(function() STATE.DropCycle.GlobalConn:Disconnect() end)
+        STATE.DropCycle.GlobalConn = nil
+    end
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ AUTO COMPLETE PROMPT                                          ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function AutoCompletePrompt()
+    local prompt, part, dist = FindNearestCarryPrompt()
+    if not prompt then
+        return false, "nenhum CarryAreaEgg no raio"
+    end
+
+    pcall(function() prompt.HoldDuration = 0 end)
+
+    local ok = false
+    if type(fireproximityprompt) == "function" then
+        ok = pcall(fireproximityprompt, prompt)
+    end
+    if not ok then
+        ok = pcall(function()
+            prompt:InputHoldBegin()
+            task.wait(0.05)
+            prompt:InputHoldEnd()
+        end)
+    end
+    if not ok then
+        return false, "falha ao disparar prompt"
+    end
+
+    local realUid = RecordPrompt(prompt, part, dist, "auto")
+    return true, realUid
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ WAIT + AUTO/MANUAL COMPLETE                                   ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function WaitAndCompletePrompt()
+    STATE.DropCycle.WaitPrompt = true
+
+    local deadline = os.clock() + CONFIG.PromptWaitTime
+    local lastTry  = 0
+    local got      = false
+    local uid      = nil
+
+    STATE.DropCycle.WaitResolve = function()
+        got = true
+        uid = STATE.DropCycle.LastUID
+    end
+
+    while os.clock() < deadline and not got do
+        if STATE.CancelFlag then
+            STATE.DropCycle.WaitPrompt  = false
+            STATE.DropCycle.WaitResolve = nil
+            return false, "cancelado"
+        end
+
+        if os.clock() - lastTry >= 0.3 then
+            lastTry = os.clock()
+            local ok, info = AutoCompletePrompt()
+            if ok then
+                got = true
+                uid = info
+                break
+            end
+        end
+
+        RunService.Heartbeat:Wait()
+    end
+
+    STATE.DropCycle.WaitPrompt  = false
+    STATE.DropCycle.WaitResolve = nil
+
+    if got then
+        task.wait(0.4)
+    end
+
+    return got, uid
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ DROP CYCLE STEP (com freeze real)                             ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local function DoDropCycle()
+    STATE.DropCycle.Count += 1
+    local n = STATE.DropCycle.Count
+
+    print(string.format("[FlyTo] Drop #%d — congelando char", n))
+
+    -- ⚡ CONGELA DE VERDADE (ancora todas as parts)
+    FreezeRoot()
+
+    -- espera 1s REALMENTE PARADO
+    local pauseUntil = os.clock() + CONFIG.DropPauseTime
+    while os.clock() < pauseUntil do
+        RunService.Heartbeat:Wait()
+        if STATE.CancelFlag then
+            UnfreezeRoot()
+            return false
+        end
+    end
+
+    -- solta o remote (char congelado)
+    local dropped = DropFieldEgg("PlayerRequest")
+    print(string.format("[FlyTo] Drop #%d → remote %s", n, dropped and "ok" or "falhou"))
+
+    task.wait(0.6)
+
+    -- auto-completa OU espera manual (char continua congelado)
+    local ok, uid = WaitAndCompletePrompt()
+    if ok then
+        print(string.format("[FlyTo] Retomando voo. UID: %s",
+            tostring(uid or STATE.DropCycle.LastUID)))
+    else
+        print("[FlyTo] Timeout. Retomando mesmo assim.")
+    end
+
+    -- ⚡ DESCONGELA
+    UnfreezeRoot()
+
+    return true
+end
+--[[ Chilli FlyTo GUI — 5B/7 (CORRIGIDO: freeze instantâneo no gatilho)
+     Redefine FlyTo com o ciclo de drop embutido (400 studs).
+     Congela o char NO MESMO FRAME que detecta o gatilho.
+]]
+
+local BaseFlyTo = FlyTo
+
+FlyTo = function(targetPos)
+    if STATE.Flying then return false, "já voando" end
+    if typeof(targetPos) ~= "Vector3" then return false, "posição inválida" end
+
+    local hrp, char = GetRoot()
+    if not hrp or not char then return false, "sem character" end
+
+    if not ClaimMovement("flyto") then
+        return false, "movement ocupado: " .. tostring(STATE.MoveOwner)
+    end
+
+    STATE.Flying     = true
+    STATE.CancelFlag = false
+
+    if CONFIG.GodMode then GodOn() end
+    StartAntiRagdoll()
+    ShieldStart()
+    StartGlobalPromptListener()
+
+    STATE.DropCycle.Active      = CONFIG.EnableDropCycle
+    STATE.DropCycle.Count       = 0
+    STATE.DropCycle.LastUID     = nil
+    STATE.DropCycle.PromptsDone = {}
+
+    local speed     = CONFIG.FlySpeed
+    local height    = CONFIG.FlyHeight
+    local arrive    = CONFIG.ArriveRadius
+    local timeoutAt = os.clock() + CONFIG.Timeout
+
+    local elevated = Vector3.new(targetPos.X, targetPos.Y + height, targetPos.Z)
+
+    local startWait = os.clock()
+    while os.clock() - startWait < CONFIG.RagdollWaitMax do
+        if not IsRagdolled() then break end
+        RunService.Heartbeat:Wait()
+        hrp, char = GetRoot()
+        if not hrp then
+            StopFlight()
+            ReleaseMovement("flyto")
+            StopGlobalPromptListener()
+            return false, "perdeu char"
+        end
+    end
+
+    pc(function()
+        local hum = GetHumanoid()
+        if hum then hum:UnequipTools() end
+    end)
+
+    ArmHitTeleport(targetPos)
+
+    local stages = {
+        Vector3.new(hrp.Position.X, elevated.Y, hrp.Position.Z),
+        elevated,
+        targetPos,
+    }
+
+    local stageIndex   = 1
+    local currentGoal  = stages[1]
+    local velCtx       = {}
+    local lastPosition = hrp.Position
+    local accumulated  = 0
+    local paused       = false
+
+    -- ══ HEARTBEAT: CFrame ═════════════════════════════════════
+    STATE.HB = RunService.Heartbeat:Connect(function(dt)
+        if STATE.CancelFlag then
+            StopFlight()
+            StopGlobalPromptListener()
+            return
+        end
+        if os.clock() > timeoutAt then
+            StopFlight()
+            StopGlobalPromptListener()
+            return
+        end
+
+        -- parado: já está congelado, não move
+        if paused then return end
+
+        local root = GetRoot()
+        if not root then
+            StopFlight(); StopGlobalPromptListener(); return
+        end
+        if root.Parent ~= char then
+            StopFlight(); StopGlobalPromptListener(); return
+        end
+
+        -- acumula distância
+        local moved = (root.Position - lastPosition).Magnitude
+        if moved > 0 and moved < 200 then
+            accumulated += moved
+        end
+        lastPosition = root.Position
+
+        -- ═══ GATILHO: 400 studs ═══
+        if STATE.DropCycle.Active and accumulated >= CONFIG.DropEveryStuds then
+            accumulated = 0
+            paused      = true
+
+            -- ⚡⚡ FREEZE IMEDIATO NO MESMO FRAME ⚡⚡
+            -- Sem isso, o char desliza alguns studs pela inércia.
+            FreezeRoot()
+
+            task.spawn(function()
+                -- DoDropCycle já chamaria FreezeRoot, mas chamamos antes pra
+                -- garantir que o freeze aconteça no frame do gatilho
+                pc(DoDropCycle)
+
+                local r2, c2 = GetRoot()
+                if r2 and c2 then
+                    char         = c2
+                    lastPosition = r2.Position
+
+                    elevated    = Vector3.new(targetPos.X, targetPos.Y + height, targetPos.Z)
+                    currentGoal = Vector3.new(r2.Position.X, elevated.Y, r2.Position.Z)
+                    stageIndex  = 1
+                end
+
+                paused = false
+            end)
+
+            return
+        end
+
+        local delta = currentGoal - root.Position
+        local mag   = delta.Magnitude
+
+        if mag <= arrive then
+            stageIndex += 1
+            if stageIndex > #stages then
+                pc(function()
+                    root.AssemblyLinearVelocity  = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                end)
+                StopFlight()
+                StopGlobalPromptListener()
+                return
+            end
+            currentGoal = stages[stageIndex]
+            return
+        end
+
+        local step   = math.min(speed * dt, mag)
+        local newPos = root.Position + delta.Unit * step
+
+        pc(function()
+            local rot = root.CFrame.Rotation
+            root.CFrame = CFrame.new(newPos) * rot
+            root.AssemblyLinearVelocity  = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end)
+
+    -- ══ PRESIMULATION: Velocity ═══════════════════════════════
+    STATE.Pre = RunService.PreSimulation:Connect(function(dt)
+        if STATE.CancelFlag then return end
+        if paused then return end   -- parado não aplica velocity
+
+        local root = GetRoot()
+        if not root then return end
+
+        local delta = currentGoal - root.Position
+        local mag   = delta.Magnitude
+
+        if mag > 2 then
+            if not velCtx.mark then
+                velCtx.mark  = mag
+                velCtx.clock = 0
+            end
+            velCtx.clock += dt
+            if velCtx.clock >= 0.4 then
+                if velCtx.mark - mag < 0.5 then
+                    pc(function()
+                        root.CFrame = root.CFrame + delta.Unit * math.min(mag, speed * dt)
+                    end)
+                end
+                velCtx.mark  = mag
+                velCtx.clock = 0
+            end
+        else
+            velCtx.mark = nil
+        end
+
+        local n = math.max(dt, 0.004166666666666667)
+        local v = Vector3.zero
+        if mag > 0.01 then
+            v = delta.Unit * math.min(speed, mag / n)
+        end
+        local finalVel = v + Vector3.new(0, workspace.Gravity * n * 0.5, 0)
+
+        pc(function()
+            root.AssemblyLinearVelocity  = finalVel
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end)
+
+    if CONFIG.GodMode then
+        STATE.GodConn = RunService.Heartbeat:Connect(GodTick)
+    end
+
+    return true
+end
+--[[ Chilli FlyTo GUI — 5C/7
+     GoToSaved (usa FlyTo patched)
+     CleanupFlight estendido (inclui UnfreezeRoot pra emergência)
+     UI extra: toggle + label UID
+]]
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ GO TO SAVED                                                   ║
+-- ╚══════════════════════════════════════════════════════════════╝
+GoToSaved = function(name)
+    local e = STATE.Saved[name]
+    if not e then return false, "não encontrado" end
+    return FlyTo(Vector3.new(e.x, e.y, e.z))
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ CLEANUP EXTRA                                                 ║
+-- ║ Se parar o voo no meio de um drop cycle, DESCONGELA o char.  ║
+-- ╚══════════════════════════════════════════════════════════════╝
+local OldCleanup = CleanupFlight
+CleanupFlight = function()
+    STATE.DropCycle.Active      = false
+    STATE.DropCycle.WaitPrompt  = false
+    STATE.DropCycle.WaitResolve = nil
+
+    -- ⚡ DESCONGELA SEMPRE — evita char preso ancorado se cancelar no meio
+    pc(UnfreezeRoot)
+
+    StopGlobalPromptListener()
+    OldCleanup()
+end
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║ UI EXTRA — toggle + label UID                                 ║
+-- ╚══════════════════════════════════════════════════════════════╝
+task.defer(function()
+    if not STATE.Gui then return end
+
+    local main = STATE.Gui:FindFirstChildWhichIsA("Frame")
+    if not main then return end
+
+    local body = nil
+    for _, child in ipairs(main:GetChildren()) do
+        if child:IsA("Frame") and child.Size == UDim2.new(1, -20, 1, -50) then
+            body = child
+            break
+        end
+    end
+    if not body then return end
+
+    -- toggle "Drop a cada N studs"
+    local dropRow = Make("Frame", {
+        Size = UDim2.new(1, 0, 0, 24),
+        Position = UDim2.new(0, 0, 0, 92),
+        BackgroundTransparency = 1,
+    }, body)
+
+    Make("TextLabel", {
+        Size = UDim2.new(1, -50, 1, 0),
+        BackgroundTransparency = 1,
+        Text = string.format("Drop a cada %d studs", CONFIG.DropEveryStuds),
+        TextColor3 = COLORS.text,
+        Font = Enum.Font.Gotham,
+        TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    }, dropRow)
+
+    local dropToggle = Make("TextButton", {
+        Size = UDim2.fromOffset(44, 20),
+        Position = UDim2.new(1, -44, 0.5, -10),
+        BackgroundColor3 = CONFIG.EnableDropCycle and COLORS.good or COLORS.item,
+        BorderSizePixel = 0,
+        Text = CONFIG.EnableDropCycle and "ON" or "OFF",
+        TextColor3 = Color3.new(1, 1, 1),
+        Font = Enum.Font.GothamBold,
+        TextSize = 10,
+        AutoButtonColor = false,
+    }, dropRow)
+    AddCorner(dropToggle, 5)
+
+    dropToggle.MouseButton1Click:Connect(function()
+        CONFIG.EnableDropCycle = not CONFIG.EnableDropCycle
+        dropToggle.BackgroundColor3 = CONFIG.EnableDropCycle and COLORS.good or COLORS.item
+        dropToggle.Text = CONFIG.EnableDropCycle and "ON" or "OFF"
+        STATE.DropCycle.Active = CONFIG.EnableDropCycle
+    end)
+
+    -- reposiciona a lista
+    for _, child in ipairs(body:GetChildren()) do
+        if child:IsA("ScrollingFrame") then
+            child.Position = UDim2.new(0, 0, 0, 120)
+            child.Size = UDim2.new(1, 0, 1, -140)
+            break
+        end
+    end
+
+    -- label do último UID
+    local uidLbl = Make("TextLabel", {
+        Size = UDim2.new(1, 0, 0, 16),
+        Position = UDim2.new(0, 0, 0, 118),
+        BackgroundTransparency = 1,
+        Text = "Último UID: —",
+        TextColor3 = COLORS.sub,
+        Font = Enum.Font.Gotham,
+        TextSize = 10,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    }, body)
+
+    task.spawn(function()
+        while STATE.Gui and STATE.Gui.Parent do
+            local last = STATE.DropCycle.LastUID or "—"
+            pc(function() uidLbl.Text = "Último UID: " .. tostring(last) end)
+            task.wait(0.5)
+        end
+    end)
+end)
