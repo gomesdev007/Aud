@@ -1350,10 +1350,11 @@ _G.__ChilliFlyToCleanup = function()
     STATE.Flying = false
     STATE.MoveOwner = nil
 end
---[[ Chilli FlyTo GUI — 5A/7 (CORRIGIDO: freeze real sem deslize)
+--[[ Chilli FlyTo GUI — 5A/7 (FINAL)
      Setup do ciclo de drop (400 studs)
-     FreezeRoot/UnfreezeRoot: Âncora temporária pra impedir
-     qualquer deslize residual no instante da parada.
+     FreezeRoot/UnfreezeRoot v2: ancora + zera WalkSpeed/JumpPower
+     Listener global de prompt (manual)
+     Auto-complete + Wait + DoDropCycle
 ]]
 
 -- ╔══════════════════════════════════════════════════════════════╗
@@ -1378,34 +1379,41 @@ STATE.DropCycle = {
     PromptsDone  = {},
     Count        = 0,
     GlobalConn   = nil,
-    FrozenParts  = {},   -- parts que foram ancoradas temporariamente
+    FrozenParts  = {},
+    FreezeToken  = 0,
 }
 
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║ FREEZE / UNFREEZE                                             ║
--- ║ Ancora TODAS as BaseParts do char. Isso congela 100% — nem   ║
--- ║ física nem velocity residual movem o char.                    ║
+-- ║ FREEZE / UNFREEZE (v2 — robusto)                              ║
+-- ║ - Snapshot só na 1ª chamada                                    ║
+-- ║ - Zera WalkSpeed/JumpPower (evita loop do Humanoid)            ║
+-- ║ - Unfreeze reforça em loop por 0.5s                            ║
+-- ║ - Watchdog solta após 3s se algo travar                        ║
 -- ╚══════════════════════════════════════════════════════════════╝
-local function FreezeRoot()
+function FreezeRoot()
     local char = LocalPlayer.Character
     if not char then return end
 
-    -- limpa tabela antes
-    table.clear(STATE.DropCycle.FrozenParts)
+    -- já congelado? só reforça os zeros (não sobrescreve snapshot)
+    if next(STATE.DropCycle.FrozenParts) ~= nil then
+        for part in pairs(STATE.DropCycle.FrozenParts) do
+            if type(part) == "Instance" and part.Parent then
+                pc(function()
+                    part.AssemblyLinearVelocity  = Vector3.zero
+                    part.AssemblyAngularVelocity = Vector3.zero
+                end)
+            end
+        end
+        return
+    end
 
-    -- salva o estado original e ancora cada part
+    -- snapshot + ancora BaseParts
     for _, d in ipairs(char:GetDescendants()) do
         if d:IsA("BasePart") then
             local prev = {
-                Anchored            = d.Anchored,
-                CanCollide          = d.CanCollide,
-                AssemblyLinearVel   = nil,
-                AssemblyAngularVel  = nil,
+                Anchored   = d.Anchored,
+                CanCollide = d.CanCollide,
             }
-            pcall(function()
-                prev.AssemblyLinearVel  = d.AssemblyLinearVelocity
-                prev.AssemblyAngularVel = d.AssemblyAngularVelocity
-            end)
             STATE.DropCycle.FrozenParts[d] = prev
 
             pc(function()
@@ -1416,7 +1424,18 @@ local function FreezeRoot()
         end
     end
 
-    -- trava o HumanoidRootPart por último (garantia)
+    -- Humanoid: zera WalkSpeed/JumpPower (evita Humanoid empurrar ancorado)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        STATE.DropCycle.FrozenParts._HumWalk = hum.WalkSpeed
+        STATE.DropCycle.FrozenParts._HumJump = hum.JumpPower
+        pc(function()
+            hum.WalkSpeed = 0
+            hum.JumpPower = 0
+        end)
+    end
+
+    -- HRP por último (garantia)
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if hrp then
         pc(function()
@@ -1425,24 +1444,89 @@ local function FreezeRoot()
             hrp.Anchored                = true
         end)
     end
+
+    -- watchdog: se ficar congelado >3s, solta à força
+    local token = (STATE.DropCycle.FreezeToken or 0) + 1
+    STATE.DropCycle.FreezeToken = token
+    task.delay(3.0, function()
+        if STATE.DropCycle.FreezeToken == token
+           and next(STATE.DropCycle.FrozenParts) ~= nil then
+            print("[FlyTo] WATCHDOG: forçando unfreeze")
+            UnfreezeRoot()
+        end
+    end)
 end
 
-local function UnfreezeRoot()
-    for part, prev in pairs(STATE.DropCycle.FrozenParts) do
-        if part and part.Parent then
+function UnfreezeRoot()
+    local char = LocalPlayer.Character
+
+    -- invalida watchdog
+    STATE.DropCycle.FreezeToken = (STATE.DropCycle.FreezeToken or 0) + 1
+
+    -- restaura BaseParts
+    for k, prev in pairs(STATE.DropCycle.FrozenParts) do
+        if type(k) == "Instance" and k.Parent then
             pc(function()
-                part.Anchored   = prev.Anchored
-                part.CanCollide = prev.CanCollide
-                if prev.AssemblyLinearVel then
-                    part.AssemblyLinearVelocity  = prev.AssemblyLinearVel
-                end
-                if prev.AssemblyAngularVel then
-                    part.AssemblyAngularVelocity = prev.AssemblyAngularVel
-                end
+                k.Anchored   = prev.Anchored or false
+                k.CanCollide = prev.CanCollide
             end)
         end
     end
+
+    -- restaura Humanoid
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            local w = STATE.DropCycle.FrozenParts._HumWalk
+            local j = STATE.DropCycle.FrozenParts._HumJump
+            pc(function()
+                if w and w > 0 then hum.WalkSpeed = w end
+                if j and j > 0 then hum.JumpPower = j end
+                hum.PlatformStand = false
+            end)
+
+            -- re-habilita states e força saída
+            for _, st in ipairs({
+                Enum.HumanoidStateType.Physics,
+                Enum.HumanoidStateType.Ragdoll,
+                Enum.HumanoidStateType.FallingDown,
+                Enum.HumanoidStateType.PlatformStanding,
+            }) do
+                pc(function() hum:SetStateEnabled(st, true) end)
+            end
+            pc(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            task.defer(function()
+                pc(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+            end)
+        end
+    end
+
     table.clear(STATE.DropCycle.FrozenParts)
+
+    -- reforço: loop por 0.5s garantindo tudo solto
+    task.spawn(function()
+        local deadline = os.clock() + 0.5
+        while os.clock() < deadline do
+            local c = LocalPlayer.Character
+            if c then
+                for _, d in ipairs(c:GetDescendants()) do
+                    if d:IsA("BasePart") and d.Anchored and d.Name ~= "Handle" then
+                        pc(function() d.Anchored = false end)
+                    end
+                end
+                local h = c:FindFirstChildOfClass("Humanoid")
+                if h then
+                    pc(function()
+                        if h.WalkSpeed == 0 then h.WalkSpeed = 16 end
+                        if h.JumpPower == 0 then h.JumpPower = 50 end
+                    end)
+                end
+            end
+            task.wait()
+        end
+    end)
+
+    print("[FlyTo] UnfreezeRoot concluído")
 end
 
 -- ╔══════════════════════════════════════════════════════════════╗
@@ -1559,7 +1643,7 @@ end
 -- ╔══════════════════════════════════════════════════════════════╗
 -- ║ LISTENER GLOBAL — manual                                      ║
 -- ╚══════════════════════════════════════════════════════════════╝
-local function StartGlobalPromptListener()
+function StartGlobalPromptListener()
     if STATE.DropCycle.GlobalConn then return end
 
     STATE.DropCycle.GlobalConn = ProximityPromptService.PromptTriggered:Connect(function(prompt, player)
@@ -1589,7 +1673,7 @@ local function StartGlobalPromptListener()
     end)
 end
 
-local function StopGlobalPromptListener()
+function StopGlobalPromptListener()
     if STATE.DropCycle.GlobalConn then
         pc(function() STATE.DropCycle.GlobalConn:Disconnect() end)
         STATE.DropCycle.GlobalConn = nil
@@ -1673,15 +1757,15 @@ local function WaitAndCompletePrompt()
 end
 
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║ DROP CYCLE STEP (com freeze real)                             ║
+-- ║ DROP CYCLE STEP (com freeze v2)                               ║
 -- ╚══════════════════════════════════════════════════════════════╝
-local function DoDropCycle()
+function DoDropCycle()
     STATE.DropCycle.Count += 1
     local n = STATE.DropCycle.Count
 
     print(string.format("[FlyTo] Drop #%d — congelando char", n))
 
-    -- ⚡ CONGELA DE VERDADE (ancora todas as parts)
+    -- ⚡ CONGELA REAL (ancora + zera WalkSpeed/JumpPower)
     FreezeRoot()
 
     -- espera 1s REALMENTE PARADO
@@ -1714,12 +1798,13 @@ local function DoDropCycle()
 
     return true
 end
---[[ Chilli FlyTo GUI — 5B/7 (CORRIGIDO: freeze instantâneo no gatilho)
+--[[ Chilli FlyTo GUI — 5B/7
      Redefine FlyTo com o ciclo de drop embutido (400 studs).
-     Congela o char NO MESMO FRAME que detecta o gatilho.
+     FreezeRoot() chamado NO MESMO FRAME do gatilho (evita deslize).
+     paused=true trava Heartbeat e PreSimulation até o drop cycle terminar.
 ]]
 
-local BaseFlyTo = FlyTo
+local BaseFlyTo = FlyTo  -- referência antiga por segurança
 
 FlyTo = function(targetPos)
     if STATE.Flying then return false, "já voando" end
@@ -1740,6 +1825,7 @@ FlyTo = function(targetPos)
     ShieldStart()
     StartGlobalPromptListener()
 
+    -- reset do ciclo
     STATE.DropCycle.Active      = CONFIG.EnableDropCycle
     STATE.DropCycle.Count       = 0
     STATE.DropCycle.LastUID     = nil
@@ -1752,6 +1838,7 @@ FlyTo = function(targetPos)
 
     local elevated = Vector3.new(targetPos.X, targetPos.Y + height, targetPos.Z)
 
+    -- espera sair do ragdoll
     local startWait = os.clock()
     while os.clock() - startWait < CONFIG.RagdollWaitMax do
         if not IsRagdolled() then break end
@@ -1798,7 +1885,7 @@ FlyTo = function(targetPos)
             return
         end
 
-        -- parado: já está congelado, não move
+        -- já está congelado pelo FreezeRoot; não faz nada
         if paused then return end
 
         local root = GetRoot()
@@ -1822,14 +1909,13 @@ FlyTo = function(targetPos)
             paused      = true
 
             -- ⚡⚡ FREEZE IMEDIATO NO MESMO FRAME ⚡⚡
-            -- Sem isso, o char desliza alguns studs pela inércia.
+            -- Sem isso, o char desliza pela inércia residual.
             FreezeRoot()
 
             task.spawn(function()
-                -- DoDropCycle já chamaria FreezeRoot, mas chamamos antes pra
-                -- garantir que o freeze aconteça no frame do gatilho
                 pc(DoDropCycle)
 
+                -- re-lê root (pode ter respawnado durante o ciclo)
                 local r2, c2 = GetRoot()
                 if r2 and c2 then
                     char         = c2
@@ -1886,6 +1972,7 @@ FlyTo = function(targetPos)
         local delta = currentGoal - root.Position
         local mag   = delta.Magnitude
 
+        -- anti-stuck: se travou por 0.4s sem reduzir distância, nudge CFrame
         if mag > 2 then
             if not velCtx.mark then
                 velCtx.mark  = mag
@@ -1924,10 +2011,10 @@ FlyTo = function(targetPos)
 
     return true
 end
---[[ Chilli FlyTo GUI — 5C/7
+--[[ Chilli FlyTo GUI — 5C/7 (FINAL)
      GoToSaved (usa FlyTo patched)
-     CleanupFlight estendido (inclui UnfreezeRoot pra emergência)
-     UI extra: toggle + label UID
+     CleanupFlight estendido — unfreeze forçado em thread separada
+     UI extra: toggle "Drop a cada N studs" + label Último UID
 ]]
 
 -- ╔══════════════════════════════════════════════════════════════╗
@@ -1941,7 +2028,8 @@ end
 
 -- ╔══════════════════════════════════════════════════════════════╗
 -- ║ CLEANUP EXTRA                                                 ║
--- ║ Se parar o voo no meio de um drop cycle, DESCONGELA o char.  ║
+-- ║ Roda UnfreezeRoot DUAS VEZES em thread separada pra garantir  ║
+-- ║ que o char solta mesmo se algo estiver no meio do ciclo.      ║
 -- ╚══════════════════════════════════════════════════════════════╝
 local OldCleanup = CleanupFlight
 CleanupFlight = function()
@@ -1949,8 +2037,12 @@ CleanupFlight = function()
     STATE.DropCycle.WaitPrompt  = false
     STATE.DropCycle.WaitResolve = nil
 
-    -- ⚡ DESCONGELA SEMPRE — evita char preso ancorado se cancelar no meio
-    pc(UnfreezeRoot)
+    -- ⚡ unfreeze forçado (fora do fluxo principal, não trava cleanup)
+    task.spawn(function()
+        pc(UnfreezeRoot)
+        task.wait(0.1)
+        pc(UnfreezeRoot)
+    end)
 
     StopGlobalPromptListener()
     OldCleanup()
@@ -1965,6 +2057,7 @@ task.defer(function()
     local main = STATE.Gui:FindFirstChildWhichIsA("Frame")
     if not main then return end
 
+    -- acha o body (Frame com size característico da Parte 4)
     local body = nil
     for _, child in ipairs(main:GetChildren()) do
         if child:IsA("Frame") and child.Size == UDim2.new(1, -20, 1, -50) then
@@ -1974,7 +2067,7 @@ task.defer(function()
     end
     if not body then return end
 
-    -- toggle "Drop a cada N studs"
+    -- ── LINHA DO TOGGLE ────────────────────────────────────────
     local dropRow = Make("Frame", {
         Size = UDim2.new(1, 0, 0, 24),
         Position = UDim2.new(0, 0, 0, 92),
@@ -2011,7 +2104,7 @@ task.defer(function()
         STATE.DropCycle.Active = CONFIG.EnableDropCycle
     end)
 
-    -- reposiciona a lista
+    -- ── REPOSICIONA LISTA ──────────────────────────────────────
     for _, child in ipairs(body:GetChildren()) do
         if child:IsA("ScrollingFrame") then
             child.Position = UDim2.new(0, 0, 0, 120)
@@ -2020,7 +2113,7 @@ task.defer(function()
         end
     end
 
-    -- label do último UID
+    -- ── LABEL ÚLTIMO UID ───────────────────────────────────────
     local uidLbl = Make("TextLabel", {
         Size = UDim2.new(1, 0, 0, 16),
         Position = UDim2.new(0, 0, 0, 118),
