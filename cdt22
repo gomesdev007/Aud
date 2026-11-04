@@ -1,0 +1,63 @@
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "FarmSelector"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 230, 0, 125)
+frame.Position = UDim2.new(0.5, -115, 0.5, -62)
+frame.BackgroundColor3 = Color3.fromRGB(22, 22, 25)
+frame.BorderSizePixel = 0
+frame.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 12)
+corner.Parent = frame
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(65, 65, 70)
+stroke.Thickness = 1
+stroke.Parent = frame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 35)
+title.BackgroundTransparency = 1
+title.Text = "ESCOLHA O SCRIPT"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 13
+title.Parent = frame
+
+local function createButton(text, y, callback)
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(1, -24, 0, 32)
+    button.Position = UDim2.new(0, 12, 0, y)
+    button.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
+    button.Text = text
+    button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    button.Font = Enum.Font.GothamMedium
+    button.TextSize = 12
+    button.BorderSizePixel = 0
+    button.Parent = frame
+
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 7)
+    c.Parent = button
+
+    button.MouseButton1Click:Connect(callback)
+end
+
+createButton("SCRIPT FARM", 42, function()
+    gui:Destroy()
+
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/cleusaff69-hue/SCRIPT-HALLOWEEN/refs/heads/main/README.md"))()
+end)
+
+createButton("COMPLETO ALL", 81, function()
+    gui:Destroy()
+
+    loadstring(game:HttpGet("https://scriptcloud.lovable.app/api/public/s/36279428ffd74f34ac856a3306537d44.lua"))()
+end)
