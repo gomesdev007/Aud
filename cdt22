@@ -1,16 +1,21 @@
 local Players = game:GetService("Players")
-local player = Players.LocalPlayer
+local UIS = game:GetService("UserInputService")
+
+local Player = Players.LocalPlayer
+local PlayerGui = Player:WaitForChild("PlayerGui")
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "FarmSelector"
+gui.Name = "ScriptSelector"
 gui.ResetOnSpawn = false
-gui.Parent = player:WaitForChild("PlayerGui")
+gui.Parent = PlayerGui
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 230, 0, 125)
-frame.Position = UDim2.new(0.5, -115, 0.5, -62)
-frame.BackgroundColor3 = Color3.fromRGB(22, 22, 25)
+frame.Size = UDim2.new(0, 230, 0, 165)
+frame.Position = UDim2.new(0.5, -115, 0.5, -82)
+frame.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
+frame.BackgroundTransparency = 0.12
 frame.BorderSizePixel = 0
+frame.Active = true
 frame.Parent = gui
 
 local corner = Instance.new("UICorner")
@@ -18,28 +23,28 @@ corner.CornerRadius = UDim.new(0, 12)
 corner.Parent = frame
 
 local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(65, 65, 70)
-stroke.Thickness = 1
+stroke.Color = Color3.fromRGB(100, 100, 105)
+stroke.Transparency = 0.4
 stroke.Parent = frame
 
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 35)
 title.BackgroundTransparency = 1
-title.Text = "ESCOLHA O SCRIPT"
-title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Text = "SELECIONE SEU SCRIPT"
+title.TextColor3 = Color3.fromRGB(245, 245, 245)
 title.Font = Enum.Font.GothamBold
-title.TextSize = 13
+title.TextSize = 12
 title.Parent = frame
 
 local function createButton(text, y, callback)
     local button = Instance.new("TextButton")
     button.Size = UDim2.new(1, -24, 0, 32)
     button.Position = UDim2.new(0, 12, 0, y)
-    button.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
+    button.BackgroundColor3 = Color3.fromRGB(55, 55, 58)
     button.Text = text
     button.TextColor3 = Color3.fromRGB(255, 255, 255)
     button.Font = Enum.Font.GothamMedium
-    button.TextSize = 12
+    button.TextSize = 11
     button.BorderSizePixel = 0
     button.Parent = frame
 
@@ -50,14 +55,509 @@ local function createButton(text, y, callback)
     button.MouseButton1Click:Connect(callback)
 end
 
+-- SCRIPT FARM
 createButton("SCRIPT FARM", 42, function()
     gui:Destroy()
 
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/cleusaff69-hue/SCRIPT-HALLOWEEN/refs/heads/main/README.md"))()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/cleusaff69-hue/SCRIPT-HALLOWEEN/refs/heads/main/README.md"
+    ))()
 end)
 
+-- COMPLETO ALL
 createButton("COMPLETO ALL", 81, function()
     gui:Destroy()
 
-    loadstring(game:HttpGet("https://scriptcloud.lovable.app/api/public/s/36279428ffd74f34ac856a3306537d44.lua"))()
+    loadstring(game:HttpGet(
+        "https://scriptcloud.lovable.app/api/public/s/36279428ffd74f34ac856a3306537d44.lua"
+    ))()
+end)
+
+-- MOTOR CONTROL
+createButton("MOTOR CONTROL", 120, function()
+    gui:Destroy()
+
+    -- MINI MOTOR CONTROL + SUPER BRAKE
+    -- GUI compacta com Keybinds configuráveis
+
+    local Players = game:GetService("Players")
+    local UIS = game:GetService("UserInputService")
+    local TweenService = game:GetService("TweenService")
+
+    local Player = Players.LocalPlayer
+    local PlayerGui = Player:WaitForChild("PlayerGui")
+
+    local old = PlayerGui:FindFirstChild("MiniMotorControl")
+    if old then old:Destroy() end
+
+    local Speed = 100
+    local Torque = 50000
+    local MotorEnabled = false
+    local Braking = false
+    local CurrentDirection = 0
+
+    local Keybinds = {
+        GUI = Enum.KeyCode.G,
+        Motor = Enum.KeyCode.T,
+        Brake = Enum.KeyCode.B
+    }
+
+    local Capturing = nil
+
+    local function getCar()
+        if Player.Character then
+            local hum = Player.Character:FindFirstChildOfClass("Humanoid")
+
+            if hum and hum.SeatPart then
+                local part = hum.SeatPart
+
+                while part and part ~= workspace do
+                    if part.Parent and part.Parent.Name == "Cars" then
+                        return part
+                    end
+
+                    if part:FindFirstChild("Stats") then
+                        return part
+                    end
+
+                    part = part.Parent
+                end
+            end
+        end
+
+        local cars = workspace:FindFirstChild("Cars")
+        if not cars then return nil end
+
+        for _, car in ipairs(cars:GetChildren()) do
+            local stats = car:FindFirstChild("Stats")
+            local owner = stats and stats:FindFirstChild("Owner")
+
+            if owner and (
+                owner.Value == Player.Name or
+                owner.Value == Player or
+                owner.Value == Player.UserId
+            ) then
+                return car
+            end
+        end
+
+        return nil
+    end
+
+    local function getMotors()
+        local car = getCar()
+        if not car then return {} end
+
+        local folder = car:FindFirstChild("Constraints")
+        if not folder then return {} end
+
+        local motors = {}
+
+        for _, item in ipairs(folder:GetChildren()) do
+            if item.Name == "Front" or item.Name == "Rodas" then
+                item.Name = "Motor"
+            end
+
+            if item.Name == "Motor" and (
+                item:IsA("HingeConstraint") or
+                item:IsA("CylindricalConstraint")
+            ) then
+                table.insert(motors, item)
+            end
+        end
+
+        return motors
+    end
+
+    local function applyMotor()
+        if not MotorEnabled then return end
+
+        for _, motor in ipairs(getMotors()) do
+            motor.ActuatorType = Enum.ActuatorType.Motor
+            motor.MotorMaxTorque = Torque
+            motor.AngularVelocity = CurrentDirection * math.abs(Speed)
+        end
+    end
+
+    local function setMotor(state)
+        MotorEnabled = state
+
+        if state then
+            applyMotor()
+        else
+            CurrentDirection = 0
+
+            for _, motor in ipairs(getMotors()) do
+                motor.AngularVelocity = 0
+            end
+        end
+    end
+
+    local function superBrake()
+        if Braking then return end
+
+        local motors = getMotors()
+        if #motors == 0 then return end
+
+        Braking = true
+
+        local previous = {}
+
+        for _, motor in ipairs(motors) do
+            previous[motor] = {
+                torque = motor.MotorMaxTorque,
+                velocity = motor.AngularVelocity,
+                actuator = motor.ActuatorType
+            }
+
+            motor.ActuatorType = Enum.ActuatorType.Motor
+            motor.MotorMaxTorque = 1000000000
+            motor.AngularVelocity = 0
+        end
+
+        task.wait(2)
+
+        for motor, data in pairs(previous) do
+            if motor and motor.Parent then
+                motor.ActuatorType = data.actuator
+                motor.MotorMaxTorque = data.torque
+                motor.AngularVelocity = data.velocity
+            end
+        end
+
+        Braking = false
+    end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "MiniMotorControl"
+    gui.ResetOnSpawn = false
+    gui.Parent = PlayerGui
+
+    local main = Instance.new("Frame")
+    main.Size = UDim2.new(0, 205, 0, 248)
+    main.Position = UDim2.new(0.5, -102, 0.5, -124)
+    main.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+    main.BackgroundTransparency = 0.18
+    main.BorderSizePixel = 0
+    main.Active = true
+    main.Parent = gui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = main
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(130, 130, 130)
+    stroke.Transparency = 0.35
+    stroke.Parent = main
+
+    local function label(parent, text, position, size)
+        local obj = Instance.new("TextLabel")
+        obj.Size = size
+        obj.Position = position
+        obj.BackgroundTransparency = 1
+        obj.Text = text
+        obj.TextColor3 = Color3.fromRGB(240, 240, 240)
+        obj.Font = Enum.Font.GothamMedium
+        obj.TextSize = 10
+        obj.Parent = parent
+        return obj
+    end
+
+    local title = label(main, "MOTOR CONTROL",
+        UDim2.new(0, 10, 0, 5),
+        UDim2.new(1, -20, 0, 22))
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 12
+
+    local function makeInput(text, y, default)
+        label(main, text,
+            UDim2.new(0, 10, 0, y),
+            UDim2.new(0.42, 0, 0, 22))
+
+        local box = Instance.new("TextBox")
+        box.Size = UDim2.new(0.48, 0, 0, 23)
+        box.Position = UDim2.new(0.48, 0, 0, y)
+        box.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        box.TextColor3 = Color3.new(1, 1, 1)
+        box.Text = tostring(default)
+        box.Font = Enum.Font.Gotham
+        box.TextSize = 11
+        box.ClearTextOnFocus = false
+        box.Parent = main
+
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 5)
+        c.Parent = box
+
+        return box
+    end
+
+    local speedBox = makeInput("Velocidade", 34, Speed)
+    local torqueBox = makeInput("Torque", 64, Torque)
+
+    local function makeButton(text, y, height)
+        local button = Instance.new("TextButton")
+        button.Size = UDim2.new(1, -20, 0, height or 25)
+        button.Position = UDim2.new(0, 10, 0, y)
+        button.BackgroundColor3 = Color3.fromRGB(90, 90, 90)
+        button.TextColor3 = Color3.new(1, 1, 1)
+        button.Text = text
+        button.Font = Enum.Font.GothamBold
+        button.TextSize = 10
+        button.Parent = main
+
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 6)
+        c.Parent = button
+
+        return button
+    end
+
+    local applyButton = makeButton("DEFINIR", 94, 25)
+    local motorButton = makeButton("MOTOR: OFF", 124, 25)
+    local brakeButton = makeButton("SUPER FREIO", 154, 25)
+
+    label(main, "ATALHOS",
+        UDim2.new(0, 10, 0, 185),
+        UDim2.new(0, 65, 0, 20)).Font = Enum.Font.GothamBold
+
+    local keyButtons = {}
+
+    local function makeKeybind(name, text, y)
+        label(main, text,
+            UDim2.new(0, 10, 0, y),
+            UDim2.new(0, 115, 0, 19))
+
+        local button = Instance.new("TextButton")
+        button.Size = UDim2.new(0, 43, 0, 19)
+        button.Position = UDim2.new(1, -53, 0, y)
+        button.BackgroundColor3 = Color3.fromRGB(42, 42, 42)
+        button.TextColor3 = Color3.new(1, 1, 1)
+        button.Text = Keybinds[name].Name
+        button.Font = Enum.Font.GothamBold
+        button.TextSize = 10
+        button.Parent = main
+
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 5)
+        c.Parent = button
+
+        keyButtons[name] = button
+
+        button.MouseButton1Click:Connect(function()
+            if Capturing then
+                keyButtons[Capturing].Text = Keybinds[Capturing].Name
+            end
+
+            Capturing = name
+            button.Text = "..."
+
+            for otherName, otherButton in pairs(keyButtons) do
+                if otherName ~= name then
+                    otherButton.Text = Keybinds[otherName].Name
+                end
+            end
+        end)
+    end
+
+    makeKeybind("GUI", "GUI", 205)
+    makeKeybind("Motor", "Motor", 225)
+    makeKeybind("Brake", "Freio", 245)
+
+    applyButton.MouseButton1Click:Connect(function()
+        local s = tonumber(speedBox.Text)
+        local t = tonumber(torqueBox.Text)
+
+        if not s or not t or s < 0 or t < 0 then
+            applyButton.Text = "VALORES INVALIDOS"
+            task.wait(1)
+            applyButton.Text = "DEFINIR"
+            return
+        end
+
+        Speed = s
+        Torque = t
+
+        if MotorEnabled then
+            applyMotor()
+        end
+
+        applyButton.Text = "APLICADO!"
+        task.wait(0.7)
+        applyButton.Text = "DEFINIR"
+    end)
+
+    motorButton.MouseButton1Click:Connect(function()
+        setMotor(not MotorEnabled)
+        motorButton.Text = MotorEnabled and "MOTOR: ON" or "MOTOR: OFF"
+    end)
+
+    brakeButton.MouseButton1Click:Connect(function()
+        task.spawn(superBrake)
+    end)
+
+    local dragging = false
+    local dragStart
+    local startPosition
+
+    main.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+
+            if input.Position.Y <= main.AbsolutePosition.Y + 28 then
+                dragging = true
+                dragStart = input.Position
+                startPosition = main.Position
+            end
+        end
+    end)
+
+    UIS.InputChanged:Connect(function(input)
+        if dragging and (
+            input.UserInputType == Enum.UserInputType.MouseMovement or
+            input.UserInputType == Enum.UserInputType.Touch
+        ) then
+            local delta = input.Position - dragStart
+
+            main.Position = UDim2.new(
+                startPosition.X.Scale,
+                startPosition.X.Offset + delta.X,
+                startPosition.Y.Scale,
+                startPosition.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    UIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    UIS.InputBegan:Connect(function(input, processed)
+        if input.UserInputType ~= Enum.UserInputType.Keyboard then
+            return
+        end
+
+        if Capturing then
+            local name = Capturing
+            local newKey = input.KeyCode
+
+            if newKey == Enum.KeyCode.Unknown
+                or newKey == Enum.KeyCode.W
+                or newKey == Enum.KeyCode.S then
+                keyButtons[name].Text = Keybinds[name].Name
+                Capturing = nil
+                return
+            end
+
+            local used = false
+
+            for otherName, otherKey in pairs(Keybinds) do
+                if otherName ~= name and otherKey == newKey then
+                    used = true
+                    break
+                end
+            end
+
+            if used then
+                keyButtons[name].Text = "USADA"
+                task.wait(0.7)
+                keyButtons[name].Text = Keybinds[name].Name
+            else
+                Keybinds[name] = newKey
+                keyButtons[name].Text = newKey.Name
+            end
+
+            Capturing = nil
+            return
+        end
+
+        if processed then return end
+
+        if input.KeyCode == Keybinds.GUI then
+            main.Visible = not main.Visible
+
+        elseif input.KeyCode == Keybinds.Motor then
+            setMotor(not MotorEnabled)
+            motorButton.Text = MotorEnabled and "MOTOR: ON" or "MOTOR: OFF"
+
+        elseif input.KeyCode == Keybinds.Brake then
+            task.spawn(superBrake)
+        end
+    end)
+
+    UIS.InputBegan:Connect(function(input, processed)
+        if processed or not MotorEnabled or Capturing then return end
+
+        if input.KeyCode == Enum.KeyCode.W then
+            CurrentDirection = -1
+            applyMotor()
+
+        elseif input.KeyCode == Enum.KeyCode.S then
+            CurrentDirection = 1
+            applyMotor()
+        end
+    end)
+
+    UIS.InputEnded:Connect(function(input)
+        if input.KeyCode == Enum.KeyCode.W
+            or input.KeyCode == Enum.KeyCode.S then
+            CurrentDirection = 0
+            applyMotor()
+        end
+    end)
+end)
+
+-- ARRASTAR SELETOR
+
+local dragging = false
+local dragStart
+local startPosition
+
+frame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+
+        if input.Position.Y <= frame.AbsolutePosition.Y + 35 then
+            dragging = true
+            dragStart = input.Position
+            startPosition = frame.Position
+        end
+    end
+end)
+
+UIS.InputChanged:Connect(function(input)
+    if dragging and (
+        input.UserInputType == Enum.UserInputType.MouseMovement or
+        input.UserInputType == Enum.UserInputType.Touch
+    ) then
+        local delta = input.Position - dragStart
+
+        frame.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+-- Q DESTRÓI SOMENTE A SELETORA
+
+UIS.InputBegan:Connect(function(input, processed)
+    if processed then return end
+
+    if input.KeyCode == Enum.KeyCode.Q then
+        gui:Destroy()
+    end
 end)
