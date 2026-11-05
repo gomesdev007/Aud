@@ -102,7 +102,7 @@ end)
 -- 3 MOTOR CONTROL V2
 createButton("MOTOR CONTROL V2", function()
     loadstring(game:HttpGet(
-        "https://scriptcloud.lovable.app/api/public/s/36279428ffd74f34ac856a3306537d44.lua"
+        "https://raw.githubusercontent.com/gomesdev007/Aud/refs/heads/main/Drift%20and%20Start"
     ))()
 end)
 
@@ -138,6 +138,13 @@ end)
 createButton("MESH SCRIPT", function()
     loadstring(game:HttpGet(
         "https://raw.githubusercontent.com/Gfhgfdgdg54/Scripts/refs/heads/main/Script%20Mesh%20V33%20FREE"
+    ))()
+end)
+
+-- 9 NO GRAVITY
+createButton("NO GRAVITY", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/gomesdev007/Aud/refs/heads/main/Fly%20and%20not%20gravity"
     ))()
 end)
 
