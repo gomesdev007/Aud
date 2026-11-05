@@ -1,0 +1,507 @@
+
+-- MINI CAR FLIGHT CONTROL
+-- Keybinds configuraveis
+-- Camera + WASD + estabilizacao
+
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local Player = Players.LocalPlayer
+local PlayerGui = Player:WaitForChild("PlayerGui")
+
+local old = PlayerGui:FindFirstChild("MiniFlightControl")
+if old then old:Destroy() end
+
+local Keys = {
+    GUI = Enum.KeyCode.G,
+    Gravity = Enum.KeyCode.H,
+    Fly = Enum.KeyCode.F
+}
+
+local Capturing = nil
+local GravityEnabled = false
+local OriginalGravity = workspace.Gravity
+local Flying = false
+
+local FlySpeed = 100
+local CurrentCar = nil
+local CurrentRoot = nil
+
+local Attachment = nil
+local LinearVelocity = nil
+local AlignOrientation = nil
+local AntiGravity = nil
+
+local LastLook = Vector3.new(0, 0, -1)
+
+-- LOCALIZAR CARRO
+
+local function getCar()
+    local character = Player.Character
+    if not character then return nil end
+
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or not humanoid.SeatPart then
+        return nil
+    end
+
+    local seat = humanoid.SeatPart
+    local current = seat
+
+    while current and current ~= workspace do
+        if current.Parent and current.Parent.Name == "Cars" then
+            return current
+        end
+
+        if current:FindFirstChild("Stats") then
+            return current
+        end
+
+        current = current.Parent
+    end
+
+    return nil
+end
+
+local function getRoot(car)
+    if not car then return nil end
+
+    local seat = Player.Character
+        and Player.Character:FindFirstChildOfClass("Humanoid")
+        and Player.Character:FindFirstChildOfClass("Humanoid").SeatPart
+
+    return car:FindFirstChild("DriveSeat")
+        or car.PrimaryPart
+        or seat
+        or car:FindFirstChildWhichIsA("BasePart", true)
+end
+
+-- REMOVER CONTROLES DE VOO
+
+local function removeFlight()
+    if LinearVelocity then
+        LinearVelocity:Destroy()
+        LinearVelocity = nil
+    end
+
+    if AlignOrientation then
+        AlignOrientation:Destroy()
+        AlignOrientation = nil
+    end
+
+    if AntiGravity then
+        AntiGravity:Destroy()
+        AntiGravity = nil
+    end
+
+    if Attachment then
+        Attachment:Destroy()
+        Attachment = nil
+    end
+
+    CurrentCar = nil
+    CurrentRoot = nil
+end
+
+-- ATIVAR VOO
+
+local function startFlight()
+    local car = getCar()
+
+    if not car then
+        return false, "Entre no carro primeiro"
+    end
+
+    local root = getRoot(car)
+
+    if not root or not root:IsA("BasePart") then
+        return false, "Nao encontrei a parte principal"
+    end
+
+    removeFlight()
+
+    CurrentCar = car
+    CurrentRoot = root
+
+    Attachment = Instance.new("Attachment")
+    Attachment.Name = "MiniFlightAttachment"
+    Attachment.Parent = root
+
+    -- MOVIMENTO
+
+    LinearVelocity = Instance.new("LinearVelocity")
+    LinearVelocity.Name = "MiniFlightVelocity"
+    LinearVelocity.Attachment0 = Attachment
+    LinearVelocity.RelativeTo = Enum.ActuatorRelativeTo.World
+    LinearVelocity.VelocityConstraintMode =
+        Enum.VelocityConstraintMode.Vector
+    LinearVelocity.VectorVelocity = Vector3.zero
+    LinearVelocity.MaxForce = math.huge
+    LinearVelocity.Parent = root
+
+    -- ESTABILIZACAO: MANTER CARRO RETO
+
+    AlignOrientation = Instance.new("AlignOrientation")
+    AlignOrientation.Name = "MiniFlightStabilizer"
+    AlignOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
+    AlignOrientation.Attachment0 = Attachment
+    AlignOrientation.CFrame = root.CFrame.Rotation
+    AlignOrientation.RigidityEnabled = false
+    AlignOrientation.Responsiveness = 30
+    AlignOrientation.MaxTorque = math.huge
+    AlignOrientation.Parent = root
+
+    -- COMPENSAR GRAVIDADE DO CARRO
+
+    AntiGravity = Instance.new("VectorForce")
+    AntiGravity.Name = "MiniFlightAntiGravity"
+    AntiGravity.Attachment0 = Attachment
+    AntiGravity.RelativeTo = Enum.ActuatorRelativeTo.World
+    AntiGravity.ApplyAtCenterOfMass = true
+    AntiGravity.Force = Vector3.new(
+        0,
+        root.AssemblyMass * workspace.Gravity,
+        0
+    )
+    AntiGravity.Parent = root
+
+    LastLook = Vector3.new(
+        root.CFrame.LookVector.X,
+        0,
+        root.CFrame.LookVector.Z
+    )
+
+    if LastLook.Magnitude > 0.01 then
+        LastLook = LastLook.Unit
+    else
+        LastLook = Vector3.new(0, 0, -1)
+    end
+
+    return true, "Fly ativado"
+end
+
+local function stopFlight()
+    Flying = false
+    removeFlight()
+end
+
+local function toggleFlight()
+    if Flying then
+        stopFlight()
+        return "Fly desativado"
+    end
+
+    local success, message = startFlight()
+
+    if success then
+        Flying = true
+    end
+
+    return message
+end
+
+-- GRAVIDADE
+
+local function toggleGravity()
+    if GravityEnabled then
+        workspace.Gravity = OriginalGravity
+        GravityEnabled = false
+        return "Gravidade restaurada"
+    else
+        OriginalGravity = workspace.Gravity
+        workspace.Gravity = 0
+        GravityEnabled = true
+        return "Gravidade zerada"
+    end
+end
+
+-- INTERFACE
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "MiniFlightControl"
+gui.ResetOnSpawn = false
+gui.Parent = PlayerGui
+
+local main = Instance.new("Frame")
+main.Size = UDim2.fromOffset(205, 145)
+main.Position = UDim2.new(0.5, -102, 0.5, -72)
+main.BackgroundColor3 = Color3.fromRGB(38, 38, 38)
+main.BackgroundTransparency = 0.15
+main.BorderSizePixel = 0
+main.Active = true
+main.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 9)
+corner.Parent = main
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(115, 115, 115)
+stroke.Transparency = 0.3
+stroke.Parent = main
+
+local function label(text, x, y, width, height)
+    local obj = Instance.new("TextLabel")
+    obj.Position = UDim2.fromOffset(x, y)
+    obj.Size = UDim2.fromOffset(width, height)
+    obj.BackgroundTransparency = 1
+    obj.Text = text
+    obj.TextColor3 = Color3.fromRGB(235, 235, 235)
+    obj.Font = Enum.Font.GothamMedium
+    obj.TextSize = 10
+    obj.TextXAlignment = Enum.TextXAlignment.Left
+    obj.Parent = main
+    return obj
+end
+
+local title = label("CAR FLIGHT CONTROL", 10, 7, 185, 20)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 12
+
+local status = label("Aguardando comando...", 10, 31, 185, 17)
+status.TextColor3 = Color3.fromRGB(165, 165, 165)
+status.TextSize = 9
+
+label("CONFIGURAR ATALHOS", 10, 52, 185, 18).Font =
+    Enum.Font.GothamBold
+
+local KeyButtons = {}
+
+local function makeKey(name, caption, y)
+    label(caption, 10, y, 115, 22)
+
+    local button = Instance.new("TextButton")
+    button.Position = UDim2.fromOffset(145, y)
+    button.Size = UDim2.fromOffset(45, 20)
+    button.BackgroundColor3 = Color3.fromRGB(23, 23, 23)
+    button.TextColor3 = Color3.new(1, 1, 1)
+    button.Text = Keys[name].Name
+    button.Font = Enum.Font.GothamBold
+    button.TextSize = 10
+    button.Parent = main
+
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 5)
+    c.Parent = button
+
+    KeyButtons[name] = button
+
+    button.MouseButton1Click:Connect(function()
+        if Capturing then
+            KeyButtons[Capturing].Text = Keys[Capturing].Name
+        end
+
+        Capturing = name
+        button.Text = "..."
+        status.Text = "Pressione uma tecla..."
+    end)
+end
+
+makeKey("GUI", "Abrir / fechar GUI", 73)
+makeKey("Gravity", "Zerar gravidade", 96)
+makeKey("Fly", "Fly Car", 119)
+
+-- ARRASTAR
+
+local dragging = false
+local dragStart
+local startPosition
+
+title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+
+        dragging = true
+        dragStart = input.Position
+        startPosition = main.Position
+    end
+end)
+
+UIS.InputChanged:Connect(function(input)
+    if dragging and (
+        input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch
+    ) then
+        local delta = input.Position - dragStart
+
+        main.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+-- TECLAS
+
+UIS.InputBegan:Connect(function(input, processed)
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then
+        return
+    end
+
+    if Capturing then
+        local name = Capturing
+        local newKey = input.KeyCode
+
+        local reserved = {
+            [Enum.KeyCode.W] = true,
+            [Enum.KeyCode.A] = true,
+            [Enum.KeyCode.S] = true,
+            [Enum.KeyCode.D] = true,
+            [Enum.KeyCode.Space] = true,
+            [Enum.KeyCode.LeftControl] = true,
+            [Enum.KeyCode.RightControl] = true
+        }
+
+        if newKey == Enum.KeyCode.Unknown or reserved[newKey] then
+            KeyButtons[name].Text = Keys[name].Name
+            Capturing = nil
+            status.Text = "Tecla reservada para voo"
+            return
+        end
+
+        for otherName, otherKey in pairs(Keys) do
+            if otherName ~= name and otherKey == newKey then
+                KeyButtons[name].Text = Keys[name].Name
+                Capturing = nil
+                status.Text = "Tecla ja utilizada"
+                return
+            end
+        end
+
+        Keys[name] = newKey
+        KeyButtons[name].Text = newKey.Name
+        Capturing = nil
+        status.Text = "Atalho atualizado"
+        return
+    end
+
+    if processed or UIS:GetFocusedTextBox() then return end
+
+    if input.KeyCode == Keys.GUI then
+        main.Visible = not main.Visible
+
+    elseif input.KeyCode == Keys.Gravity then
+        status.Text = toggleGravity()
+
+    elseif input.KeyCode == Keys.Fly then
+        status.Text = toggleFlight()
+    end
+end)
+
+-- CONTROLE DE VOO PELA CAMERA
+
+RunService.RenderStepped:Connect(function()
+    if not Flying then return end
+
+    if not CurrentRoot or not CurrentRoot.Parent then
+        stopFlight()
+        status.Text = "Carro perdido"
+        return
+    end
+
+    if getCar() ~= CurrentCar then
+        stopFlight()
+        status.Text = "Voando desativado"
+        return
+    end
+
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+
+    local look = camera.CFrame.LookVector
+    local right = camera.CFrame.RightVector
+
+    local horizontalLook = Vector3.new(look.X, 0, look.Z)
+
+    if horizontalLook.Magnitude > 0.01 then
+        LastLook = horizontalLook.Unit
+    end
+
+    -- DIRECAO HORIZONTAL DA CAMERA
+
+    local forward = look
+    local side = right
+
+    local movement = Vector3.zero
+
+    if UIS:IsKeyDown(Enum.KeyCode.W) then
+        movement += forward
+    end
+
+    if UIS:IsKeyDown(Enum.KeyCode.S) then
+        movement -= forward
+    end
+
+    if UIS:IsKeyDown(Enum.KeyCode.D) then
+        movement += side
+    end
+
+    if UIS:IsKeyDown(Enum.KeyCode.A) then
+        movement -= side
+    end
+
+    if UIS:IsKeyDown(Enum.KeyCode.Space) then
+        movement += Vector3.yAxis
+    end
+
+    if UIS:IsKeyDown(Enum.KeyCode.LeftControl)
+        or UIS:IsKeyDown(Enum.KeyCode.RightControl) then
+        movement -= Vector3.yAxis
+    end
+
+    if movement.Magnitude > 1 then
+        movement = movement.Unit
+    end
+
+    LinearVelocity.VectorVelocity = movement * FlySpeed
+
+    -- MANTER O CARRO NIVELADO
+    -- Usa somente a rotacao horizontal da camera.
+    -- Nao copia a inclinacao vertical da camera.
+
+    local target = CFrame.lookAt(
+        Vector3.zero,
+        LastLook,
+        Vector3.yAxis
+    )
+
+    AlignOrientation.CFrame = target
+
+    -- ATUALIZAR COMPENSACAO DA GRAVIDADE
+
+    AntiGravity.Force = Vector3.new(
+        0,
+        CurrentRoot.AssemblyMass * workspace.Gravity,
+        0
+    )
+end)
+
+-- LIMPEZA
+
+Player.CharacterAdded:Connect(function()
+    stopFlight()
+
+    if GravityEnabled then
+        workspace.Gravity = OriginalGravity
+        GravityEnabled = false
+    end
+end)
+
+gui.Destroying:Connect(function()
+    stopFlight()
+
+    if GravityEnabled then
+        workspace.Gravity = OriginalGravity
+        GravityEnabled = false
+    end
+end)
