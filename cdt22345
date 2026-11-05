@@ -1,86 +1,110 @@
---[v1]
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
-local Player = Players.LocalPlayer
-local PlayerGui = Player:WaitForChild("PlayerGui")
 
+local player = Players.LocalPlayer
+local PlayerGui = player:WaitForChild("PlayerGui")
+
+-- LIMPAR SELETOR ANTIGO
+local old = PlayerGui:FindFirstChild("ScriptSelector")
+if old then old:Destroy() end
+
+-- GUI
 local gui = Instance.new("ScreenGui")
 gui.Name = "ScriptSelector"
 gui.ResetOnSpawn = false
 gui.Parent = PlayerGui
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(230, 165)
-frame.Position = UDim2.new(0.5, -115, 0.5, -82)
-frame.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
-frame.BackgroundTransparency = 0.12
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Parent = gui
+local main = Instance.new("Frame")
+main.Size = UDim2.fromOffset(235, 255)
+main.Position = UDim2.new(0.5, -117, 0.5, -127)
+main.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
+main.BackgroundTransparency = 0.12
+main.BorderSizePixel = 0
+main.Active = true
+main.Parent = gui
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 12)
-corner.Parent = frame
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
 
-local stroke = Instance.new("UIStroke")
+local stroke = Instance.new("UIStroke", main)
 stroke.Color = Color3.fromRGB(100, 100, 105)
 stroke.Transparency = 0.4
-stroke.Parent = frame
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 35)
+title.Size = UDim2.new(1, 0, 0, 38)
 title.BackgroundTransparency = 1
 title.Text = "SELECIONE SEU SCRIPT"
-title.TextColor3 = Color3.fromRGB(245, 245, 245)
+title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 12
-title.Parent = frame
+title.Parent = main
+
+local subtitle = Instance.new("TextLabel")
+subtitle.Size = UDim2.new(1, 0, 0, 17)
+subtitle.Position = UDim2.fromOffset(0, 29)
+subtitle.BackgroundTransparency = 1
+subtitle.Text = "Q  •  FECHAR SELETOR"
+subtitle.TextColor3 = Color3.fromRGB(140,140,140)
+subtitle.Font = Enum.Font.Gotham
+subtitle.TextSize = 9
+subtitle.Parent = main
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Position = UDim2.fromOffset(10, 52)
+scroll.Size = UDim2.new(1, -20, 1, -62)
+scroll.BackgroundTransparency = 1
+scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 3
+scroll.ScrollBarImageColor3 = Color3.fromRGB(120,120,120)
+scroll.CanvasSize = UDim2.new(0,0,0,0)
+scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scroll.Parent = main
+
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0, 7)
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Parent = scroll
 
 local selected = false
 
-local function createButton(text, y, callback)
+local function createButton(name, callback)
     local button = Instance.new("TextButton")
-    button.Size = UDim2.new(1, -24, 0, 32)
-    button.Position = UDim2.new(0, 12, 0, y)
-    button.BackgroundColor3 = Color3.fromRGB(55, 55, 58)
-    button.Text = text
-    button.TextColor3 = Color3.new(1, 1, 1)
+    button.Size = UDim2.new(1, -5, 0, 34)
+    button.BackgroundColor3 = Color3.fromRGB(52,52,55)
+    button.BorderSizePixel = 0
+    button.Text = name
+    button.TextColor3 = Color3.fromRGB(245,245,245)
     button.Font = Enum.Font.GothamMedium
     button.TextSize = 11
-    button.BorderSizePixel = 0
-    button.Parent = frame
+    button.Parent = scroll
 
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, 7)
-    c.Parent = button
+    Instance.new("UICorner", button).CornerRadius = UDim.new(0,7)
 
     button.MouseButton1Click:Connect(function()
         if selected then return end
         selected = true
+
         gui:Destroy()
-        callback()
+
+        task.spawn(callback)
     end)
 end
 
--- SCRIPT FARM
-createButton("SCRIPT FARM", 42, function()
+-- 1 SCRIPT FARM
+createButton("SCRIPT FARM", function()
     loadstring(game:HttpGet(
         "https://raw.githubusercontent.com/cleusaff69-hue/SCRIPT-HALLOWEEN/refs/heads/main/README.md"
     ))()
 end)
 
--- COMPLETO ALL
-createButton("COMPLETO ALL", 81, function()
+-- 2 COMPLETO ALL
+createButton("COMPLETO ALL", function()
     loadstring(game:HttpGet(
         "https://scriptcloud.lovable.app/api/public/s/36279428ffd74f34ac856a3306537d44.lua"
     ))()
 end)
 
--- MOTOR CONTROL V2
-createButton("MOTOR CONTROL V2", 120, function()
-
-    -- MINI MOTOR CONTROL V2
-    -- Baseado na logica do Multi Controller original
+-- 3 MOTOR CONTROL V2
+createButton("MOTOR CONTROL V2", function()
 
     local Players = game:GetService("Players")
     local UIS = game:GetService("UserInputService")
@@ -280,37 +304,32 @@ createButton("MOTOR CONTROL V2", 120, function()
         return true
     end
 
-    -- INTERFACE
-
     local motorGui = Instance.new("ScreenGui")
     motorGui.Name = "MiniMotorControl"
     motorGui.ResetOnSpawn = false
     motorGui.Parent = playerGui
 
     local main = Instance.new("Frame")
-    main.Size = UDim2.fromOffset(205, 260)
-    main.Position = UDim2.new(0.5, -102, 0.5, -130)
-    main.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    main.Size = UDim2.fromOffset(205,260)
+    main.Position = UDim2.new(0.5,-102,0.5,-130)
+    main.BackgroundColor3 = Color3.fromRGB(35,35,35)
     main.BackgroundTransparency = 0.15
     main.BorderSizePixel = 0
     main.Parent = motorGui
 
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 9)
-    corner.Parent = main
+    Instance.new("UICorner",main).CornerRadius = UDim.new(0,9)
 
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(110, 110, 110)
+    local stroke = Instance.new("UIStroke",main)
+    stroke.Color = Color3.fromRGB(110,110,110)
     stroke.Transparency = 0.3
-    stroke.Parent = main
 
-    local function makeLabel(text, x, y, w, h)
+    local function makeLabel(text,x,y,w,h)
         local obj = Instance.new("TextLabel")
-        obj.Position = UDim2.fromOffset(x, y)
-        obj.Size = UDim2.fromOffset(w, h)
+        obj.Position = UDim2.fromOffset(x,y)
+        obj.Size = UDim2.fromOffset(w,h)
         obj.BackgroundTransparency = 1
         obj.Text = text
-        obj.TextColor3 = Color3.fromRGB(235, 235, 235)
+        obj.TextColor3 = Color3.fromRGB(235,235,235)
         obj.Font = Enum.Font.GothamMedium
         obj.TextSize = 10
         obj.TextXAlignment = Enum.TextXAlignment.Left
@@ -318,82 +337,72 @@ createButton("MOTOR CONTROL V2", 120, function()
         return obj
     end
 
-    local title = makeLabel("MOTOR CONTROL", 10, 5, 185, 22)
+    local title = makeLabel("MOTOR CONTROL",10,5,185,22)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 12
 
-    local function makeInput(text, y, default)
-        makeLabel(text, 10, y, 85, 22)
+    local function makeInput(text,y,default)
+        makeLabel(text,10,y,85,22)
 
         local box = Instance.new("TextBox")
-        box.Position = UDim2.fromOffset(100, y)
-        box.Size = UDim2.fromOffset(95, 22)
-        box.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
-        box.TextColor3 = Color3.new(1, 1, 1)
+        box.Position = UDim2.fromOffset(100,y)
+        box.Size = UDim2.fromOffset(95,22)
+        box.BackgroundColor3 = Color3.fromRGB(22,22,22)
+        box.TextColor3 = Color3.new(1,1,1)
         box.Text = tostring(default)
         box.Font = Enum.Font.Gotham
         box.TextSize = 11
         box.ClearTextOnFocus = false
         box.Parent = main
 
-        local c = Instance.new("UICorner")
-        c.CornerRadius = UDim.new(0, 5)
-        c.Parent = box
-
+        Instance.new("UICorner",box).CornerRadius = UDim.new(0,5)
         return box
     end
 
-    local speedBox = makeInput("Velocidade", 34, speed)
-    local torqueBox = makeInput("Torque", 62, torque)
+    local speedBox = makeInput("Velocidade",34,speed)
+    local torqueBox = makeInput("Torque",62,torque)
 
-    local function makeButton(text, y)
+    local function makeButton(text,y)
         local button = Instance.new("TextButton")
-        button.Position = UDim2.fromOffset(10, y)
-        button.Size = UDim2.fromOffset(185, 25)
-        button.BackgroundColor3 = Color3.fromRGB(75, 75, 75)
-        button.TextColor3 = Color3.new(1, 1, 1)
+        button.Position = UDim2.fromOffset(10,y)
+        button.Size = UDim2.fromOffset(185,25)
+        button.BackgroundColor3 = Color3.fromRGB(75,75,75)
+        button.TextColor3 = Color3.new(1,1,1)
         button.Text = text
         button.Font = Enum.Font.GothamBold
         button.TextSize = 10
         button.Parent = main
 
-        local c = Instance.new("UICorner")
-        c.CornerRadius = UDim.new(0, 5)
-        c.Parent = button
-
+        Instance.new("UICorner",button).CornerRadius = UDim.new(0,5)
         return button
     end
 
-    local applyButton = makeButton("APLICAR VELOCIDADE / TORQUE", 92)
-    local motorButton = makeButton("MOTOR: OFF", 122)
-    local brakeButton = makeButton("SUPER FREIO", 152)
+    local applyButton = makeButton("APLICAR VELOCIDADE / TORQUE",92)
+    local motorButton = makeButton("MOTOR: OFF",122)
+    local brakeButton = makeButton("SUPER FREIO",152)
 
-    local status = makeLabel("Aguardando veículo...", 10, 181, 185, 17)
-    status.TextColor3 = Color3.fromRGB(170, 170, 170)
+    local status = makeLabel("Aguardando veículo...",10,181,185,17)
+    status.TextColor3 = Color3.fromRGB(170,170,170)
     status.TextSize = 9
 
-    -- KEYBINDS
-
-    makeLabel("ATALHOS", 10, 203, 80, 17).Font = Enum.Font.GothamBold
+    makeLabel("ATALHOS",10,203,80,17).Font = Enum.Font.GothamBold
 
     local keyButtons = {}
 
-    local function makeKey(name, y, caption)
-        makeLabel(caption, 10, y, 120, 20)
+    local function makeKey(name,y,caption)
+        makeLabel(caption,10,y,120,20)
 
         local button = Instance.new("TextButton")
-        button.Position = UDim2.fromOffset(145, y)
-        button.Size = UDim2.fromOffset(45, 19)
-        button.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
-        button.TextColor3 = Color3.new(1, 1, 1)
+        button.Position = UDim2.fromOffset(145,y)
+        button.Size = UDim2.fromOffset(45,19)
+        button.BackgroundColor3 = Color3.fromRGB(22,22,22)
+        button.TextColor3 = Color3.new(1,1,1)
         button.Text = keys[name].Name
         button.Font = Enum.Font.GothamBold
         button.TextSize = 10
         button.Parent = main
 
-        local c = Instance.new("UICorner")
-        c.CornerRadius = UDim.new(0, 4)
-        c.Parent = button
+        Instance.new("UICorner",button).CornerRadius = UDim.new(0,4)
 
         keyButtons[name] = button
 
@@ -408,10 +417,8 @@ createButton("MOTOR CONTROL V2", 120, function()
         end)
     end
 
-    makeKey("GUI", 220, "Abrir / fechar")
-    makeKey("Motor", 240, "Motor")
-
-    -- BOTÕES
+    makeKey("GUI",220,"Abrir / fechar")
+    makeKey("Motor",240,"Motor")
 
     applyButton.MouseButton1Click:Connect(function()
         local s = tonumber(speedBox.Text)
@@ -468,8 +475,6 @@ createButton("MOTOR CONTROL V2", 120, function()
         end)
     end)
 
-    -- ARRASTAR
-
     local dragging = false
     local dragStart
     local startPos
@@ -507,9 +512,7 @@ createButton("MOTOR CONTROL V2", 120, function()
         end
     end)
 
-    -- TECLAS CONFIGURAVEIS
-
-    UIS.InputBegan:Connect(function(input, processed)
+    UIS.InputBegan:Connect(function(input,processed)
         if input.UserInputType ~= Enum.UserInputType.Keyboard then
             return
         end
@@ -527,7 +530,7 @@ createButton("MOTOR CONTROL V2", 120, function()
                 return
             end
 
-            for otherName, otherKey in pairs(keys) do
+            for otherName,otherKey in pairs(keys) do
                 if otherName ~= name and otherKey == newKey then
                     keyButtons[name].Text = keys[name].Name
                     capturing = nil
@@ -562,9 +565,7 @@ createButton("MOTOR CONTROL V2", 120, function()
         end
     end)
 
-    -- W / S: DIRECAO ORIGINAL
-
-    UIS.InputBegan:Connect(function(input, processed)
+    UIS.InputBegan:Connect(function(input,processed)
         if processed or capturing or UIS:GetFocusedTextBox() then return end
 
         if input.KeyCode == Enum.KeyCode.W then
@@ -596,11 +597,9 @@ createButton("MOTOR CONTROL V2", 120, function()
         end
     end)
 
-    -- ATUALIZAR STATUS DO VEICULO
-
     task.spawn(function()
         while motorGui.Parent do
-            local motors, car = getMotors()
+            local motors,car = getMotors()
 
             if car and #motors > 0 then
                 if isSeated(car) then
@@ -619,21 +618,40 @@ createButton("MOTOR CONTROL V2", 120, function()
     end)
 end)
 
+-- 4 DRIFT
+createButton("DRIFT", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/profissionalxd/ANT-STYLE-Y00K-DRIFT/refs/heads/main/ANT%20STYLE%20SCRIPT%20LUA%20OBFUSCATOR.lua"
+    ))()
+end)
+
+-- 5 TRAVAR MARCHA
+createButton("TRAVAR MARCHA", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/profissionalxd/AntiMarcha-Da-Maldade/refs/heads/main/Anti%20Marcha.lua"
+    ))()
+end)
+
+-- 6 XCONFIG
+createButton("XCONFIG", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/terr0rxit/Config-X/refs/heads/main/Config%20X.txt"
+    ))()
+end)
+
 -- ARRASTAR SELETORA
 
 local dragging = false
 local dragStart
 local startPosition
 
-frame.InputBegan:Connect(function(input)
+title.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
 
-        if input.Position.Y <= frame.AbsolutePosition.Y + 35 then
-            dragging = true
-            dragStart = input.Position
-            startPosition = frame.Position
-        end
+        dragging = true
+        dragStart = input.Position
+        startPosition = main.Position
     end
 end)
 
@@ -644,7 +662,7 @@ UIS.InputChanged:Connect(function(input)
     ) then
         local delta = input.Position - dragStart
 
-        frame.Position = UDim2.new(
+        main.Position = UDim2.new(
             startPosition.X.Scale,
             startPosition.X.Offset + delta.X,
             startPosition.Y.Scale,
@@ -662,7 +680,7 @@ end)
 
 -- Q: DESTRUIR SOMENTE A SELETORA
 
-UIS.InputBegan:Connect(function(input, processed)
+UIS.InputBegan:Connect(function(input,processed)
     if processed or not gui.Parent then return end
 
     if input.KeyCode == Enum.KeyCode.Q then
