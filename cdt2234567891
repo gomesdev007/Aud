@@ -182,7 +182,12 @@ createButton("XANDÃO", function()
         "https://raw.githubusercontent.com/alexandretop2/scripts/refs/heads/main/xandaopainel.lua"
     ))()
 end)
-
+-- 15 LOADER TEST
+createButton("LOADER TEST", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/gomesdev007/Aud/refs/heads/main/Loader%20jump%20test"
+    ))()
+end)
 -- ARRASTAR SELETORA
 local dragging = false
 local dragStart
