@@ -155,6 +155,34 @@ createButton("UNIVERSAL MESH", function()
     ))()
 end)
 
+-- 11 DRIFT 2
+createButton("DRIFT 2", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/Gfhgfdgdg54/Scripts/refs/heads/main/Script%20Drift%20By%20Maxx54"
+    ))()
+end)
+
+-- 12 FUGA
+createButton("FUGA", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/davidavi12376-ops/script-fuga/refs/heads/main/README.md"
+    ))()
+end)
+
+-- 13 DRIFT 3
+createButton("DRIFT 3", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/profissionalxd/ANT-STYLE-Y00K-DRIFT/refs/heads/main/ANT%20STYLE%20SCRIPT%20LUA%20OBFUSCATOR.lua"
+    ))()
+end)
+
+-- 14 XANDÃO
+createButton("XANDÃO", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/alexandretop2/scripts/refs/heads/main/xandaopainel.lua"
+    ))()
+end)
+
 -- ARRASTAR SELETORA
 local dragging = false
 local dragStart
