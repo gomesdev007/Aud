@@ -148,6 +148,13 @@ createButton("NO GRAVITY", function()
     ))()
 end)
 
+-- 10 UNIVERSAL MESH
+createButton("UNIVERSAL MESH", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/gomesdev007/Aud/refs/heads/main/Invisble%20car"
+    ))()
+end)
+
 -- ARRASTAR SELETORA
 local dragging = false
 local dragStart
