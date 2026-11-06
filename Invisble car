@@ -1,0 +1,162 @@
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+local enabled = false
+local hiddenCar = nil
+local originals = {}
+local guiName = "CarInvisibleMini"
+
+local oldGui = player.PlayerGui:FindFirstChild(guiName)
+if oldGui then
+    oldGui:Destroy()
+end
+
+-- Detecta o carro usando a mesma lógica do script original
+local function findMyCar()
+    local cars = workspace:FindFirstChild("Cars")
+    if not cars then return nil end
+
+    for _, car in ipairs(cars:GetChildren()) do
+        local stats = car:FindFirstChild("Stats")
+
+        if stats then
+            local owner = stats:FindFirstChild("Owner")
+
+            if owner then
+                if owner:IsA("StringValue") and owner.Value == player.Name
+                or owner:IsA("ObjectValue") and owner.Value == player then
+                    return car
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+local function makeInvisible(car)
+    if not car then return end
+
+    for _, obj in ipairs(car:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            if originals[obj] == nil then
+                originals[obj] = {
+                    Type = "Part",
+                    Value = obj.LocalTransparencyModifier
+                }
+            end
+
+            obj.LocalTransparencyModifier = 1
+
+        elseif obj:IsA("Decal") or obj:IsA("Texture") then
+            if originals[obj] == nil then
+                originals[obj] = {
+                    Type = "Texture",
+                    Value = obj.Transparency
+                }
+            end
+
+            obj.Transparency = 1
+        end
+    end
+end
+
+local function restoreCar()
+    for obj, data in pairs(originals) do
+        if obj and obj.Parent then
+            if data.Type == "Part" then
+                obj.LocalTransparencyModifier = data.Value
+            else
+                obj.Transparency = data.Value
+            end
+        end
+    end
+
+    table.clear(originals)
+    hiddenCar = nil
+end
+
+-- GUI
+local gui = Instance.new("ScreenGui")
+gui.Name = guiName
+gui.ResetOnSpawn = false
+gui.Parent = player.PlayerGui
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 155, 0, 65)
+frame.Position = UDim2.new(0.5, -77, 0.5, -32)
+frame.BackgroundColor3 = Color3.fromRGB(20, 20, 23)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = frame
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(65, 65, 70)
+stroke.Thickness = 1
+stroke.Parent = frame
+
+local button = Instance.new("TextButton")
+button.Size = UDim2.new(1, -14, 1, -14)
+button.Position = UDim2.new(0, 7, 0, 7)
+button.BackgroundColor3 = Color3.fromRGB(55, 55, 60)
+button.TextColor3 = Color3.new(1, 1, 1)
+button.Text = "CARRO INVISÍVEL: OFF"
+button.TextSize = 11
+button.Font = Enum.Font.GothamBold
+button.BorderSizePixel = 0
+button.Parent = frame
+
+local buttonCorner = Instance.new("UICorner")
+buttonCorner.CornerRadius = UDim.new(0, 7)
+buttonCorner.Parent = button
+
+button.MouseButton1Click:Connect(function()
+    if not enabled then
+        local car = findMyCar()
+
+        if not car then
+            button.Text = "CARRO NÃO ENCONTRADO"
+            task.wait(1)
+            button.Text = "CARRO INVISÍVEL: OFF"
+            return
+        end
+
+        enabled = true
+        hiddenCar = car
+        makeInvisible(car)
+
+        button.Text = "CARRO INVISÍVEL: ON"
+        button.BackgroundColor3 = Color3.fromRGB(35, 110, 65)
+
+    else
+        enabled = false
+        restoreCar()
+
+        button.Text = "CARRO INVISÍVEL: OFF"
+        button.BackgroundColor3 = Color3.fromRGB(55, 55, 60)
+    end
+end)
+
+-- Atualiza caso o carro receba novas peças ou seja substituído
+task.spawn(function()
+    while gui.Parent do
+        task.wait(0.5)
+
+        if enabled then
+            local car = findMyCar()
+
+            if car and car ~= hiddenCar then
+                restoreCar()
+                hiddenCar = car
+                makeInvisible(car)
+            elseif hiddenCar and hiddenCar.Parent then
+                makeInvisible(hiddenCar)
+            end
+        end
+    end
+end)
