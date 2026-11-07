@@ -286,12 +286,12 @@ button.MouseButton1Click:Connect(function()
     if vehicleSeat then
         local vehicle = vehicleSeat:FindFirstAncestorOfClass("Model")
         if vehicle then
-            vehicle:PivotTo(platform.CFrame * CFrame.new(0, 8, 0))
-        else
-            root.CFrame = platform.CFrame * CFrame.new(0, 8, 0)
-        end
-    else
-        root.CFrame = platform.CFrame * CFrame.new(0, 8, 0)
+            vehicle:PivotTo(platform.CFrame * CFrame.new(0, 55, 0))
+else
+    root.CFrame = platform.CFrame * CFrame.new(0, 55, 0)
+end
+else
+    root.CFrame = platform.CFrame * CFrame.new(0, 55, 0)
     end
 
     button.Text = "ATIVO"
