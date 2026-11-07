@@ -191,25 +191,29 @@ end)
 -- 16 CODIGO BRUTO
 createButton("CODIGO BRUTO", function()
 
-    --
+    -- 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
-local CoreGui = game:GetService("CoreGui")
 
 local player = Players.LocalPlayer
+local guiName = "TesteTopSpeed"
 
-local old = CoreGui:FindFirstChild("TesteTopSpeed")
-if old then old:Destroy() end
+-- Remover interface anterior
+local old = game:GetService("CoreGui"):FindFirstChild(guiName)
+if old then
+    old:Destroy()
+end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "TesteTopSpeed"
+gui.Name = guiName
 gui.ResetOnSpawn = false
-gui.Parent = CoreGui
+gui.Parent = game:GetService("CoreGui")
 
+-- Janela
 local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(155, 85)
+frame.Size = UDim2.new(0, 155, 0, 85)
 frame.Position = UDim2.new(0.5, -77, 0.5, -42)
-frame.BackgroundColor3 = Color3.fromRGB(55,55,55)
+frame.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
 frame.BackgroundTransparency = 0.2
 frame.BorderSizePixel = 0
 frame.Active = true
@@ -217,169 +221,87 @@ frame.Draggable = true
 frame.Parent = gui
 
 local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0,10)
+corner.CornerRadius = UDim.new(0, 10)
 corner.Parent = frame
 
+-- Título
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1,0,0,30)
+title.Size = UDim2.new(1, 0, 0, 30)
 title.BackgroundTransparency = 1
 title.Text = "Teste Top Speed"
-title.TextColor3 = Color3.new(1,1,1)
-title.Font = Enum.Font.GothamBold
+title.TextColor3 = Color3.fromRGB(255,255,255)
 title.TextSize = 13
+title.Font = Enum.Font.GothamBold
 title.Parent = frame
 
+-- Botão GO
 local button = Instance.new("TextButton")
-button.Size = UDim2.new(1,-16,0,35)
-button.Position = UDim2.new(0,8,0,40)
+button.Size = UDim2.new(1, -16, 0, 35)
+button.Position = UDim2.new(0, 8, 0, 40)
 button.BackgroundColor3 = Color3.fromRGB(100,100,100)
 button.Text = "GO"
 button.TextColor3 = Color3.new(1,1,1)
-button.Font = Enum.Font.GothamBold
 button.TextSize = 13
+button.Font = Enum.Font.GothamBold
 button.BorderSizePixel = 0
 button.Parent = frame
 
-local bc = Instance.new("UICorner")
-bc.CornerRadius = UDim.new(0,7)
-bc.Parent = button
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(0, 7)
+btnCorner.Parent = button
 
-local busy = false
+-- Plataforma local
 local platform
 
-local function tweenCharacter(root, destination)
-    local tween = TweenService:Create(
-        root,
-        TweenInfo.new(6, Enum.EasingStyle.Linear),
-        {CFrame = destination}
-    )
-
-    tween:Play()
-    tween.Completed:Wait()
-end
-
-local function tweenVehicle(vehicle, destination)
-    local start = vehicle:GetPivot()
-
-    local value = Instance.new("CFrameValue")
-    value.Value = start
-
-    local connection = value:GetPropertyChangedSignal("Value"):Connect(function()
-        vehicle:PivotTo(value.Value)
-    end)
-
-    local tween = TweenService:Create(
-        value,
-        TweenInfo.new(6, Enum.EasingStyle.Linear),
-        {Value = destination}
-    )
-
-    tween:Play()
-    tween.Completed:Wait()
-
-    vehicle:PivotTo(destination)
-
-    connection:Disconnect()
-    value:Destroy()
-end
-
 button.MouseButton1Click:Connect(function()
-    if busy then return end
-    busy = true
-    button.Text = "AGUARDE..."
+    local character = player.Character
+    if not character then return end
 
-    local success, err = pcall(function()
-        local character = player.Character
-        if not character then return end
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
 
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        local root = character:FindFirstChild("HumanoidRootPart")
-
-        if not humanoid or not root then return end
-
-        -- Identificar veículo
-        local seat = humanoid.SeatPart
-        local vehicle = nil
-
-        if seat then
-            vehicle = seat:FindFirstAncestorOfClass("Model")
-        end
-
-        -- Destino: 400 studs acima da posição inicial
-        local destinationY = root.Position.Y + 400
-
-        -- Transportar usando TweenService
-        if vehicle then
-            local pivot = vehicle:GetPivot()
-            local destination = CFrame.new(
-                pivot.Position.X,
-                destinationY + 5,
-                pivot.Position.Z
-            ) * (pivot - pivot.Position)
-
-            tweenVehicle(vehicle, destination)
-        else
-            local destination = root.CFrame + Vector3.new(0,400,0)
-            tweenCharacter(root, destination)
-        end
-
-        -- Congelar temporariamente
-        local saved = {}
-
-        local function freeze(part)
-            if part:IsA("BasePart") then
-                saved[part] = part.Anchored
-                part.Anchored = true
-            end
-        end
-
-        for _, part in ipairs(character:GetDescendants()) do
-            freeze(part)
-        end
-
-        if vehicle then
-            for _, part in ipairs(vehicle:GetDescendants()) do
-                freeze(part)
-            end
-        end
-
-        -- Criar plataforma depois da chegada
-        if platform then
-            platform:Destroy()
-        end
-
-        platform = Instance.new("Part")
-        platform.Name = "TopSpeedPlatform"
-        platform.Size = Vector3.new(100000, 0.2, 100000)
-        platform.Position = Vector3.new(
-            root.Position.X,
-            destinationY,
-            root.Position.Z
-        )
-        platform.Anchored = true
-        platform.CanCollide = true
-        platform.Transparency = 0.15
-        platform.Color = Color3.fromRGB(100,100,100)
-        platform.Material = Enum.Material.SmoothPlastic
-        platform.Parent = workspace
-
-        -- Descongelar e restaurar estados anteriores
-        for part, wasAnchored in pairs(saved) do
-            if part.Parent then
-                part.Anchored = wasAnchored
-            end
-        end
-    end)
-
-    if not success then
-        warn("Teste Top Speed: " .. tostring(err))
+    if platform then
+        platform:Destroy()
     end
 
+    platform = Instance.new("Part")
+    platform.Name = "TopSpeedLocalPlatform"
+    platform.Size = Vector3.new(1000000, 10, 1000000)
+    platform.Position = Vector3.new(
+        root.Position.X,
+        root.Position.Y + 500,
+        root.Position.Z
+    )
+    platform.Anchored = true
+    platform.CanCollide = true
+    platform.Transparency = 0.15
+    platform.Color = Color3.fromRGB(90,90,90)
+    platform.Material = Enum.Material.SmoothPlastic
+    platform.Parent = workspace
+
+    -- Teletransportar personagem
+    local seat = character:FindFirstChildWhichIsA("Humanoid")
+    local vehicleSeat = seat and seat.SeatPart
+
+    if vehicleSeat then
+        local vehicle = vehicleSeat:FindFirstAncestorOfClass("Model")
+        if vehicle then
+            vehicle:PivotTo(platform.CFrame * CFrame.new(0, 8, 0))
+        else
+            root.CFrame = platform.CFrame * CFrame.new(0, 8, 0)
+        end
+    else
+        root.CFrame = platform.CFrame * CFrame.new(0, 8, 0)
+    end
+
+    button.Text = "ATIVO"
+    task.wait(1)
     button.Text = "GO"
-    busy = false
 end)
 
-    
+
+end)
+
 
 -- ARRASTAR SELETORA
 local dragging = false
