@@ -1,474 +1,231 @@
---[[ Universal ESP + Keybind GUI - v2 ]]
-
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local CoreGui = game:GetService("CoreGui")
+local UIS = game:GetService("UserInputService")
 
-local LocalPlayer = Players.LocalPlayer
-local Camera = workspace.CurrentCamera
+local player = Players.LocalPlayer
+local PlayerGui = player:WaitForChild("PlayerGui")
 
---============================================================
--- CONFIG
---============================================================
-local Config = {
-    ToggleKey = Enum.KeyCode.G,
-    ESP = {
-        Enabled = true,
-        Box = true,
-        Name = true,
-        Line = true,
-        Health = false,
-        Distance = false,
-        TeamCheck = true,
-        Cars = false,
-    },
-}
-
---============================================================
--- CLEANUP
---============================================================
-local parentGui = (gethui and gethui()) or CoreGui
-local old = parentGui:FindFirstChild("KVK_MiniGui")
+local old = PlayerGui:FindFirstChild("ScriptSelector")
 if old then old:Destroy() end
 
---============================================================
--- DRAWINGS
---============================================================
-local Drawings = {}
-local function newDrawing(class, props)
-    local ok, obj = pcall(function()
-        local d = Drawing.new(class)
-        for k, v in pairs(props) do d[k] = v end
-        return d
-    end)
-    if ok and obj then
-        table.insert(Drawings, obj)
-        return obj
-    end
-end
+local gui = Instance.new("ScreenGui")
+gui.Name = "ScriptSelector"
+gui.ResetOnSpawn = false
+gui.Parent = PlayerGui
 
---============================================================
--- PLAYER ESP
---============================================================
-local ESPData = {}
+local main = Instance.new("Frame")
+main.Size = UDim2.fromOffset(235, 255)
+main.Position = UDim2.new(0.5, -117, 0.5, -127)
+main.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
+main.BackgroundTransparency = 0.12
+main.BorderSizePixel = 0
+main.Active = true
+main.Parent = gui
 
-local function createESPFor(player)
-    if player == LocalPlayer or ESPData[player] then return end
-    ESPData[player] = {
-        Box = newDrawing("Square", {Thickness = 1, Color = Color3.fromRGB(255,255,255), Filled = false, Visible = false}),
-        Name = newDrawing("Text", {Size = 14, Color = Color3.fromRGB(255,255,255), Center = true, Outline = true, Visible = false}),
-        Health = newDrawing("Line", {Thickness = 2, Color = Color3.fromRGB(0,255,0), Visible = false}),
-        Distance = newDrawing("Text", {Size = 12, Color = Color3.fromRGB(200,200,200), Center = true, Outline = true, Visible = false}),
-        Line = newDrawing("Line", {Thickness = 1, Color = Color3.fromRGB(255,255,255), Visible = false}),
-    }
-end
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
 
-local function removeESPFor(player)
-    local data = ESPData[player]
-    if not data then return end
-    for _, d in pairs(data) do
-        if d then pcall(function() d:Remove() end) end
-    end
-    ESPData[player] = nil
-end
+local stroke = Instance.new("UIStroke", main)
+stroke.Color = Color3.fromRGB(100, 100, 105)
+stroke.Transparency = 0.4
 
---============================================================
--- CAR ESP (line pra roda + nome "none")
---============================================================
-local CarESP = {}
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 38)
+title.BackgroundTransparency = 1
+title.Text = "SELECIONE SEU SCRIPT"
+title.TextColor3 = Color3.fromRGB(245,245,245)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 12
+title.Parent = main
 
-local function createCarESP(vehicle)
-    if CarESP[vehicle] then return end
-    CarESP[vehicle] = {
-        Name = newDrawing("Text", {Size = 13, Color = Color3.fromRGB(255,180,0), Center = true, Outline = true, Visible = false}),
-        Line = newDrawing("Line", {Thickness = 1, Color = Color3.fromRGB(255,180,0), Visible = false}),
-        Wheels = {},
-    }
-end
+local subtitle = Instance.new("TextLabel")
+subtitle.Size = UDim2.new(1, 0, 0, 17)
+subtitle.Position = UDim2.fromOffset(0, 29)
+subtitle.BackgroundTransparency = 1
+subtitle.Text = "Q  •  FECHAR SELETOR"
+subtitle.TextColor3 = Color3.fromRGB(140,140,140)
+subtitle.Font = Enum.Font.Gotham
+subtitle.TextSize = 9
+subtitle.Parent = main
 
-local function removeCarESP(vehicle)
-    local data = CarESP[vehicle]
-    if not data then return end
-    if data.Name then pcall(function() data.Name:Remove() end) end
-    if data.Line then pcall(function() data.Line:Remove() end) end
-    CarESP[vehicle] = nil
-end
+local scroll = Instance.new("ScrollingFrame")
+scroll.Position = UDim2.fromOffset(10, 52)
+scroll.Size = UDim2.new(1, -20, 1, -62)
+scroll.BackgroundTransparency = 1
+scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 3
+scroll.ScrollBarImageColor3 = Color3.fromRGB(120,120,120)
+scroll.CanvasSize = UDim2.new(0,0,0,0)
+scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scroll.Parent = main
 
-local function refreshWheels(vehicle, data)
-    data.Wheels = {}
-    for _, d in ipairs(vehicle:GetDescendants()) do
-        if d:IsA("BasePart") and string.find(string.lower(d.Name), "wheel") then
-            table.insert(data.Wheels, d)
-        end
-    end
-end
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0, 7)
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Parent = scroll
 
-local function getWheelCenter(vehicle, data)
-    if #data.Wheels == 0 or not data.Wheels[1].Parent then
-        refreshWheels(vehicle, data)
-    end
-    if #data.Wheels > 0 then
-        local sum = Vector3.new(0, 0, 0)
-        local count = 0
-        for _, w in ipairs(data.Wheels) do
-            if w and w.Parent then
-                sum = sum + w.Position
-                count = count + 1
-            end
-        end
-        if count > 0 then return sum / count end
-    end
-    local seat = vehicle:FindFirstChildWhichIsA("VehicleSeat")
-    if seat then return seat.Position end
-    if vehicle.PrimaryPart then return vehicle.PrimaryPart.Position end
-    return nil
-end
+local selected = false
 
---============================================================
--- BBOX HELPER
---============================================================
-local function getBoundingBox(character)
-    local hrp = character:FindFirstChild("HumanoidRootPart")
-    local head = character:FindFirstChild("Head")
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not hrp or not head or not humanoid or humanoid.Health <= 0 then return nil end
+local function createButton(name, callback)
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(1, -5, 0, 34)
+    button.BackgroundColor3 = Color3.fromRGB(52,52,55)
+    button.BorderSizePixel = 0
+    button.Text = name
+    button.TextColor3 = Color3.fromRGB(245,245,245)
+    button.Font = Enum.Font.GothamMedium
+    button.TextSize = 11
+    button.Parent = scroll
 
-    local hrpPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
-    if not onScreen then return nil end
+    Instance.new("UICorner", button).CornerRadius = UDim.new(0,7)
 
-    local headPos = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
-    local footPos = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
-
-    local height = math.abs(headPos.Y - footPos.Y)
-    local width = height * 0.6
-    return Vector2.new(hrpPos.X - width / 2, hrpPos.Y - height / 2), Vector2.new(width, height), hrpPos
-end
-
---============================================================
--- RENDER
---============================================================
-RunService.RenderStepped:Connect(function()
-    local screenSize = Camera.ViewportSize
-
-    -- PLAYERS
-    for player, data in pairs(ESPData) do
-        if not player.Parent or player == LocalPlayer then
-            removeESPFor(player)
-            continue
-        end
-
-        local char = player.Character
-        local hidden = not Config.ESP.Enabled or not char
-        if not hidden and Config.ESP.TeamCheck and player.Team == LocalPlayer.Team then
-            hidden = true
-        end
-
-        if hidden then
-            for _, d in pairs(data) do if d then d.Visible = false end end
-            continue
-        end
-
-        local topLeft, size, center = getBoundingBox(char)
-        if not topLeft then
-            for _, d in pairs(data) do if d then d.Visible = false end end
-            continue
-        end
-
-        if Config.ESP.Box then
-            data.Box.Visible = true
-            data.Box.Size = size
-            data.Box.Position = topLeft
-            data.Box.Color = Color3.fromRGB(255, 60, 60)
-        else
-            data.Box.Visible = false
-        end
-
-        if Config.ESP.Name then
-            data.Name.Visible = true
-            data.Name.Text = player.Name
-            data.Name.Position = Vector2.new(center.X, topLeft.Y - 16)
-        else
-            data.Name.Visible = false
-        end
-
-        if Config.ESP.Line then
-            data.Line.Visible = true
-            data.Line.From = Vector2.new(screenSize.X / 2, screenSize.Y)
-            data.Line.To = Vector2.new(center.X, center.Y)
-            data.Line.Color = Color3.fromRGB(255, 60, 60)
-        else
-            data.Line.Visible = false
-        end
-
-        if Config.ESP.Health then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum then
-                local pct = hum.Health / hum.MaxHealth
-                data.Health.Visible = true
-                data.Health.From = Vector2.new(topLeft.X - 5, topLeft.Y + size.Y)
-                data.Health.To = Vector2.new(topLeft.X - 5, topLeft.Y + size.Y * (1 - pct))
-                data.Health.Color = Color3.fromRGB(255 * (1 - pct), 255 * pct, 0)
-            end
-        else
-            data.Health.Visible = false
-        end
-
-        if Config.ESP.Distance then
-            local dist = (Camera.CFrame.Position - char.HumanoidRootPart.Position).Magnitude
-            data.Distance.Visible = true
-            data.Distance.Text = string.format("[%d]", math.floor(dist))
-            data.Distance.Position = Vector2.new(center.X, topLeft.Y + size.Y + 2)
-        else
-            data.Distance.Visible = false
-        end
-    end
-
-    -- CARS
-    local carMaster = Config.ESP.Enabled and Config.ESP.Cars
-    for vehicle, data in pairs(CarESP) do
-        if not vehicle.Parent then
-            removeCarESP(vehicle)
-            continue
-        end
-
-        if not carMaster then
-            if data.Name then data.Name.Visible = false end
-            if data.Line then data.Line.Visible = false end
-            continue
-        end
-
-        local wheelPos = getWheelCenter(vehicle, data)
-        if not wheelPos then
-            if data.Name then data.Name.Visible = false end
-            if data.Line then data.Line.Visible = false end
-            continue
-        end
-
-        local screenPos, onScreen = Camera:WorldToViewportPoint(wheelPos)
-        if not onScreen then
-            if data.Name then data.Name.Visible = false end
-            if data.Line then data.Line.Visible = false end
-            continue
-        end
-
-        -- NAME "none"
-        if Config.ESP.Name then
-            data.Name.Visible = true
-            data.Name.Text = "none"
-            data.Name.Position = Vector2.new(screenPos.X, screenPos.Y - 30)
-        else
-            data.Name.Visible = false
-        end
-
-        -- LINE pra roda
-        data.Line.Visible = true
-        data.Line.From = Vector2.new(screenSize.X / 2, screenSize.Y)
-        data.Line.To = Vector2.new(screenPos.X, screenPos.Y)
-        data.Line.Color = Color3.fromRGB(255, 180, 0)
-    end
-end)
-
---============================================================
--- POPULATE PLAYERS
---============================================================
-Players.PlayerAdded:Connect(createESPFor)
-Players.PlayerRemoving:Connect(removeESPFor)
-for _, p in ipairs(Players:GetPlayers()) do createESPFor(p) end
-
---============================================================
--- POPULATE CARS
---============================================================
-for _, v in ipairs(workspace:GetDescendants()) do
-    if v:IsA("VehicleSeat") then
-        local model = v:FindFirstAncestorOfClass("Model")
-        if model then createCarESP(model) end
-    end
-end
-
-workspace.DescendantAdded:Connect(function(v)
-    if v:IsA("VehicleSeat") then
-        local model = v:FindFirstAncestorOfClass("Model")
-        if model then createCarESP(model) end
-    end
-end)
-
---============================================================
--- GUI
---============================================================
-local Gui = Instance.new("ScreenGui")
-Gui.Name = "KVK_MiniGui"
-Gui.ResetOnSpawn = false
-Gui.IgnoreGuiInset = true
-Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-Gui.Parent = parentGui
-
-local Main = Instance.new("Frame")
-Main.Size = UDim2.new(0, 260, 0, 340)
-Main.Position = UDim2.new(0, 20, 0, 20)
-Main.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-Main.BackgroundTransparency = 0.25
-Main.BorderSizePixel = 0
-Main.Active = true
-Main.Draggable = true
-Main.Parent = Gui
-Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 10)
-
-local Stroke = Instance.new("UIStroke", Main)
-Stroke.Color = Color3.fromRGB(90, 90, 90)
-Stroke.Thickness = 1
-Stroke.Transparency = 0.4
-
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 32)
-Title.BackgroundTransparency = 1
-Title.Font = Enum.Font.GothamBold
-Title.Text = "KVK"
-Title.TextColor3 = Color3.fromRGB(230, 230, 230)
-Title.TextSize = 16
-Title.Parent = Main
-
--- KEYBIND
-local KeyRow = Instance.new("Frame")
-KeyRow.Size = UDim2.new(1, -20, 0, 34)
-KeyRow.Position = UDim2.new(0, 10, 0, 36)
-KeyRow.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-KeyRow.BorderSizePixel = 0
-KeyRow.Parent = Main
-Instance.new("UICorner", KeyRow).CornerRadius = UDim.new(0, 6)
-
-local KeyLabel = Instance.new("TextLabel")
-KeyLabel.Size = UDim2.new(0, 90, 1, 0)
-KeyLabel.BackgroundTransparency = 1
-KeyLabel.Font = Enum.Font.Gotham
-KeyLabel.Text = "Toggle Key"
-KeyLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-KeyLabel.TextSize = 13
-KeyLabel.Parent = KeyRow
-
-local KeyBtn = Instance.new("TextButton")
-KeyBtn.Size = UDim2.new(0, 90, 0, 24)
-KeyBtn.Position = UDim2.new(1, -100, 0, 5)
-KeyBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-KeyBtn.BorderSizePixel = 0
-KeyBtn.Font = Enum.Font.GothamBold
-KeyBtn.Text = tostring(Config.ToggleKey.Name)
-KeyBtn.TextColor3 = Color3.fromRGB(230, 230, 230)
-KeyBtn.TextSize = 13
-KeyBtn.AutoButtonColor = false
-KeyBtn.Parent = KeyRow
-Instance.new("UICorner", KeyBtn).CornerRadius = UDim.new(0, 6)
-
--- ROWS
-local function makeRow(text, yPos)
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, -20, 0, 30)
-    row.Position = UDim2.new(0, 10, 0, yPos)
-    row.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    row.BorderSizePixel = 0
-    row.Parent = Main
-    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
-
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1, -50, 1, 0)
-    lbl.Position = UDim2.new(0, 10, 0, 0)
-    lbl.BackgroundTransparency = 1
-    lbl.Font = Enum.Font.Gotham
-    lbl.Text = text
-    lbl.TextColor3 = Color3.fromRGB(210, 210, 210)
-    lbl.TextSize = 13
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Parent = row
-
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 40, 0, 20)
-    btn.Position = UDim2.new(1, -50, 0, 5)
-    btn.BackgroundColor3 = Color3.fromRGB(180, 60, 60)
-    btn.BorderSizePixel = 0
-    btn.Font = Enum.Font.GothamBold
-    btn.Text = "OFF"
-    btn.TextColor3 = Color3.fromRGB(230, 230, 230)
-    btn.TextSize = 12
-    btn.Parent = row
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
-    return row, btn
-end
-
-local function bindToggle(btn, key)
-    local function refresh()
-        if Config.ESP[key] then
-            btn.Text = "ON"
-            btn.BackgroundColor3 = Color3.fromRGB(60, 180, 90)
-        else
-            btn.Text = "OFF"
-            btn.BackgroundColor3 = Color3.fromRGB(180, 60, 60)
-        end
-    end
-    refresh()
-    btn.MouseButton1Click:Connect(function()
-        Config.ESP[key] = not Config.ESP[key]
-        refresh()
+    button.MouseButton1Click:Connect(function()
+        if selected then return end
+        selected = true
+        gui:Destroy()
+        task.spawn(callback)
     end)
 end
 
-local _, b1 = makeRow("ESP", 78);          bindToggle(b1, "Enabled")
-local _, b2 = makeRow("Box", 114);         bindToggle(b2, "Box")
-local _, b3 = makeRow("Name", 150);        bindToggle(b3, "Name")
-local _, b4 = makeRow("Line", 186);        bindToggle(b4, "Line")
-local _, b5 = makeRow("Health", 222);      bindToggle(b5, "Health")
-local _, b6 = makeRow("Distance", 258);    bindToggle(b6, "Distance")
-local _, b7 = makeRow("Team Check", 294);  bindToggle(b7, "TeamCheck")
-local _, b8 = makeRow("Cars ESP", 330);    bindToggle(b8, "Cars")
-
--- KEYBIND CAPTURE
-local capturing = false
-KeyBtn.MouseButton1Click:Connect(function()
-    capturing = true
-    KeyBtn.Text = "..."
+-- 1 SCRIPT FARM
+createButton("SCRIPT FARM", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/cleusaff69-hue/SCRIPT-HALLOWEEN/refs/heads/main/README.md"
+    ))()
 end)
 
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
+-- 2 COMPLETO ALL
+createButton("COMPLETO ALL", function()
+    loadstring(game:HttpGet(
+        "https://scriptcloud.lovable.app/api/public/s/36279428ffd74f34ac856a3306537d44.lua"
+    ))()
+end)
 
-    if capturing then
-        if input.UserInputType == Enum.UserInputType.Keyboard then
-            Config.ToggleKey = input.KeyCode
-            KeyBtn.Text = input.KeyCode.Name
-            capturing = false
-        end
-        return
+-- 3 MOTOR CONTROL V2
+createButton("MOTOR CONTROL V2", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/gomesdev007/Aud/refs/heads/main/Drift%20and%20Start"
+    ))()
+end)
+
+-- 4 DRIFT
+createButton("DRIFT", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/profissionalxd/ANT-STYLE-Y00K-DRIFT/refs/heads/main/ANT%20STYLE%20SCRIPT%20LUA%20OBFUSCATOR.lua"
+    ))()
+end)
+
+-- 5 TRAVAR MARCHA
+createButton("TRAVAR MARCHA", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/profissionalxd/AntiMarcha-Da-Maldade/refs/heads/main/Anti%20Marcha.lua"
+    ))()
+end)
+
+-- 6 XCONFIG
+createButton("XCONFIG", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/terr0rxit/Config-X/refs/heads/main/Config%20X.txt"
+    ))()
+end)
+
+-- 7 MESH CODES
+createButton("MESH CODES", function()
+    loadstring(game:HttpGet(
+        "https://scriptcloud.lovable.app/api/public/s/45c04bac8c8643d5862c6a5e8330ab9d.lua"
+    ))()
+end)
+
+-- 8 MESH SCRIPT
+createButton("MESH SCRIPT", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/Gfhgfdgdg54/Scripts/refs/heads/main/Script%20Mesh%20V33%20FREE"
+    ))()
+end)
+
+-- 9 NO GRAVITY
+createButton("NO GRAVITY", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/gomesdev007/Aud/refs/heads/main/Fly%20and%20not%20gravity"
+    ))()
+end)
+
+-- 10 UNIVERSAL MESH
+createButton("UNIVERSAL MESH", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/gomesdev007/Aud/refs/heads/main/Invisble%20car"
+    ))()
+end)
+
+-- 11 DRIFT 2
+createButton("DRIFT 2", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/Gfhgfdgdg54/Scripts/refs/heads/main/Script%20Drift%20By%20Maxx54"
+    ))()
+end)
+
+-- 12 FUGA
+createButton("FUGA", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/davidavi12376-ops/script-fuga/refs/heads/main/README.md"
+    ))()
+end)
+
+-- 13 DRIFT 3
+createButton("DRIFT 3", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/profissionalxd/ANT-STYLE-Y00K-DRIFT/refs/heads/main/ANT%20STYLE%20SCRIPT%20LUA%20OBFUSCATOR.lua"
+    ))()
+end)
+
+-- 14 XANDÃO
+createButton("XANDÃO", function()
+    loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/alexandretop2/scripts/refs/heads/main/xandaopainel.lua"
+    ))()
+end)
+
+-- ARRASTAR SELETORA
+local dragging = false
+local dragStart
+local startPosition
+
+title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+
+        dragging = true
+        dragStart = input.Position
+        startPosition = main.Position
     end
+end)
 
-    if input.KeyCode == Config.ToggleKey then
-        Main.Visible = not Main.Visible
+UIS.InputChanged:Connect(function(input)
+    if dragging and (
+        input.UserInputType == Enum.UserInputType.MouseMovement or
+        input.UserInputType == Enum.UserInputType.Touch
+    ) then
+        local delta = input.Position - dragStart
+
+        main.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
     end
 end)
 
--- MOBILE
-local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-
-local MiniBtn = Instance.new("TextButton")
-MiniBtn.Size = UDim2.new(0, 40, 0, 40)
-MiniBtn.Position = UDim2.new(0, 10, 0, 10)
-MiniBtn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-MiniBtn.BackgroundTransparency = 0.15
-MiniBtn.Text = ""
-MiniBtn.BorderSizePixel = 0
-MiniBtn.Visible = false
-MiniBtn.Parent = Gui
-Instance.new("UICorner", MiniBtn).CornerRadius = UDim.new(1, 0)
-
-MiniBtn.MouseButton1Click:Connect(function()
-    Main.Visible = not Main.Visible
-end)
-
-Main:GetPropertyChangedSignal("Visible"):Connect(function()
-    if isMobile then
-        MiniBtn.Visible = not Main.Visible
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
     end
 end)
 
-if isMobile then
-    Main.Visible = true
-    MiniBtn.Visible = false
-end
+-- Q FECHA SOMENTE A SELETORA
+UIS.InputBegan:Connect(function(input, processed)
+    if processed or not gui.Parent then return end
+
+    if input.KeyCode == Enum.KeyCode.Q then
+        gui:Destroy()
+    end
+end)
