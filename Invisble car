@@ -1,152 +1,478 @@
+--[[ Universal ESP + Keybind GUI ]]
 
 local Players = game:GetService("Players")
-local player = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
 
-local guiName = "OriginalCarInvisible"
-local enabled = false
-local originalCar = nil
-local saved = {}
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
 
-local old = player.PlayerGui:FindFirstChild(guiName)
-if old then old:Destroy() end
+--============================================================
+-- CONFIG
+--============================================================
+local Config = {
+    ToggleKey = Enum.KeyCode.G,
+    ESP = {
+        Enabled = true,
+        Box = true,
+        Name = true,
+        Line = true,
+        Health = false,
+        Distance = false,
+        TeamCheck = true,
+        Cars = false,
+    },
+}
 
--- Encontrar somente o carro original do jogador
-local function findMyCar()
-    local cars = workspace:FindFirstChild("Cars")
-    if not cars then return nil end
+--============================================================
+-- CLEANUP
+--============================================================
+local parentGui = (gethui and gethui()) or CoreGui
+if parentGui:FindFirstChild("KVK_MiniGui") then
+    parentGui.KVK_MiniGui:Destroy()
+end
 
-    for _, car in ipairs(cars:GetChildren()) do
-        local stats = car:FindFirstChild("Stats")
-        local owner = stats and stats:FindFirstChild("Owner")
-
-        if owner then
-            if (owner:IsA("StringValue") and owner.Value == player.Name)
-            or (owner:IsA("ObjectValue") and owner.Value == player) then
-                return car
-            end
-        end
+--============================================================
+-- DRAWING UTILS
+--============================================================
+local Drawings = {}
+local function newDrawing(class, props)
+    local ok, obj = pcall(function()
+        local d = Drawing.new(class)
+        for k, v in pairs(props) do d[k] = v end
+        return d
+    end)
+    if ok and obj then
+        table.insert(Drawings, obj)
+        return obj
     end
-
     return nil
 end
 
--- Esconder exclusivamente as peças do carro original
-local function hideCar(car)
-    if not car then return end
+local function clearDrawings()
+    for _, d in ipairs(Drawings) do
+        pcall(function() d:Remove() end)
+    end
+    Drawings = {}
+end
 
-    for _, obj in ipairs(car:GetDescendants()) do
-        if obj:IsA("BasePart") then
-            if saved[obj] == nil then
-                saved[obj] = {
-                    transparency = obj.LocalTransparencyModifier
-                }
+--============================================================
+-- ESP DATA PER PLAYER
+--============================================================
+local ESPData = {}
+
+local function createESPFor(player)
+    if player == LocalPlayer then return end
+    if ESPData[player] then return end
+    ESPData[player] = {
+        Box = newDrawing("Square", {Thickness = 1, Color = Color3.fromRGB(255,255,255), Filled = false, Visible = false}),
+        Name = newDrawing("Text", {Size = 14, Color = Color3.fromRGB(255,255,255), Center = true, Outline = true, Visible = false}),
+        Health = newDrawing("Line", {Thickness = 2, Color = Color3.fromRGB(0,255,0), Visible = false}),
+        Distance = newDrawing("Text", {Size = 12, Color = Color3.fromRGB(200,200,200), Center = true, Outline = true, Visible = false}),
+        Line = newDrawing("Line", {Thickness = 1, Color = Color3.fromRGB(255,255,255), Visible = false}),
+    }
+end
+
+local function removeESPFor(player)
+    local data = ESPData[player]
+    if not data then return end
+    for _, d in pairs(data) do
+        pcall(function() d:Remove() end)
+    end
+    ESPData[player] = nil
+end
+
+--============================================================
+-- CAR ESP (uses vehicle seat)
+--============================================================
+local CarESP = {}
+local function createCarESPFor(vehicle)
+    if CarESP[vehicle] then return end
+    CarESP[vehicle] = {
+        Box = newDrawing("Square", {Thickness = 1, Color = Color3.fromRGB(255,180,0), Filled = false, Visible = false}),
+        Name = newDrawing("Text", {Size = 13, Color = Color3.fromRGB(255,180,0), Center = true, Outline = true, Visible = false}),
+    }
+end
+
+--============================================================
+-- HELPER: get world-to-screen bbox
+--============================================================
+local function getBoundingBox(character)
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    local head = character:FindFirstChild("Head")
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not hrp or not head or not humanoid or humanoid.Health <= 0 then return nil end
+
+    local hrpPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+    if not onScreen then return nil end
+
+    local headPos = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
+    local footPos = Camera:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0))
+
+    local height = math.abs(headPos.Y - footPos.Y)
+    local width = height * 0.6
+    return Vector2.new(hrpPos.X - width / 2, hrpPos.Y - height / 2), Vector2.new(width, height), hrpPos
+end
+
+--============================================================
+-- ESP UPDATE LOOP
+--============================================================
+RunService.RenderStepped:Connect(function()
+    clearDrawings = clearDrawings -- keep reference
+
+    for player, data in pairs(ESPData) do
+        if not player.Parent or player == LocalPlayer then
+            removeESPFor(player)
+            continue
+        end
+
+        local char = player.Character
+        local allHidden = not Config.ESP.Enabled
+
+        if allHidden or not char then
+            for _, d in pairs(data) do d.Visible = false end
+            continue
+        end
+
+        if Config.ESP.TeamCheck and player.Team == LocalPlayer.Team then
+            for _, d in pairs(data) do d.Visible = false end
+            continue
+        end
+
+        local topLeft, size, center = getBoundingBox(char)
+        if not topLeft then
+            for _, d in pairs(data) do d.Visible = false end
+            continue
+        end
+
+        local screenSize = Camera.ViewportSize
+
+        -- BOX
+        if Config.ESP.Box then
+            data.Box.Visible = true
+            data.Box.Size = size
+            data.Box.Position = topLeft
+            data.Box.Color = Color3.fromRGB(255, 60, 60)
+        else
+            data.Box.Visible = false
+        end
+
+        -- NAME
+        if Config.ESP.Name then
+            data.Name.Visible = true
+            data.Name.Text = player.Name
+            data.Name.Position = Vector2.new(center.X, topLeft.Y - 16)
+        else
+            data.Name.Visible = false
+        end
+
+        -- LINE
+        if Config.ESP.Line then
+            data.Line.Visible = true
+            data.Line.From = Vector2.new(screenSize.X / 2, screenSize.Y)
+            data.Line.To = Vector2.new(center.X, center.Y)
+            data.Line.Color = Color3.fromRGB(255, 60, 60)
+        else
+            data.Line.Visible = false
+        end
+
+        -- HEALTH
+        if Config.ESP.Health then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                local pct = hum.Health / hum.MaxHealth
+                data.Health.Visible = true
+                data.Health.From = Vector2.new(topLeft.X - 5, topLeft.Y + size.Y)
+                data.Health.To = Vector2.new(topLeft.X - 5, topLeft.Y + size.Y * (1 - pct))
+                local c = Color3.fromRGB(255 * (1 - pct), 255 * pct, 0)
+                data.Health.Color = c
             end
+        else
+            data.Health.Visible = false
+        end
 
-            obj.LocalTransparencyModifier = 1
+        -- DISTANCE
+        if Config.ESP.Distance then
+            local dist = (Camera.CFrame.Position - char.HumanoidRootPart.Position).Magnitude
+            data.Distance.Visible = true
+            data.Distance.Text = string.format("[%d]", math.floor(dist))
+            data.Distance.Position = Vector2.new(center.X, topLeft.Y + size.Y + 2)
+        else
+            data.Distance.Visible = false
+        end
+    end
 
-        elseif obj:IsA("Decal") or obj:IsA("Texture") then
-            if saved[obj] == nil then
-                saved[obj] = {
-                    transparency = obj.Transparency
-                }
-            end
+    -- Car ESP
+    for vehicle, data in pairs(CarESP) do
+        if not vehicle.Parent or not Config.ESP.Enabled or not Config.ESP.Cars then
+            data.Box.Visible = false
+            data.Name.Visible = false
+            continue
+        end
+        local seat = vehicle:FindFirstChildOfClass("VehicleSeat") or vehicle.PrimaryPart
+        if not seat then
+            data.Box.Visible = false
+            data.Name.Visible = false
+            continue
+        end
+        local pos, onScreen = Camera:WorldToViewportPoint(seat.Position)
+        if not onScreen then
+            data.Box.Visible = false
+            data.Name.Visible = false
+            continue
+        end
+        local size = Vector2.new(60, 60)
+        local tl = Vector2.new(pos.X - size.X / 2, pos.Y - size.Y / 2)
+        data.Box.Visible = true
+        data.Box.Size = size
+        data.Box.Position = tl
+        data.Name.Visible = true
+        data.Name.Text = "CAR"
+        data.Name.Position = Vector2.new(pos.X, tl.Y - 16)
+    end
+end)
 
-            obj.Transparency = 1
+--============================================================
+-- POPULATE
+--============================================================
+local function onPlayerAdded(p) createESPFor(p) end
+local function onPlayerRemoving(p) removeESPFor(p) end
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(onPlayerRemoving)
+for _, p in ipairs(Players:GetPlayers()) do createESPFor(p) end
+
+-- Car scan
+local function scanCars()
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("VehicleSeat") then
+            local model = v:FindFirstAncestorOfClass("Model")
+            if model then createCarESPFor(model) end
         end
     end
 end
-
--- Restaurar valores originais
-local function restoreCar()
-    for obj, data in pairs(saved) do
-        if obj and obj.Parent then
-            if obj:IsA("BasePart") then
-                obj.LocalTransparencyModifier = data.transparency
-            elseif obj:IsA("Decal") or obj:IsA("Texture") then
-                obj.Transparency = data.transparency
-            end
-        end
+scanCars()
+workspace.DescendantAdded:Connect(function(v)
+    if v:IsA("VehicleSeat") then
+        local model = v:FindFirstAncestorOfClass("Model")
+        if model then createCarESPFor(model) end
     end
+end)
 
-    table.clear(saved)
-    originalCar = nil
+--============================================================
+-- GUI BUILD
+--============================================================
+local Gui = Instance.new("ScreenGui")
+Gui.Name = "KVK_MiniGui"
+Gui.ResetOnSpawn = false
+Gui.IgnoreGuiInset = true
+Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+Gui.Parent = parentGui
+
+-- MAIN FRAME
+local Main = Instance.new("Frame")
+Main.Name = "Main"
+Main.Size = UDim2.new(0, 260, 0, 340)
+Main.Position = UDim2.new(0, 20, 0, 20)
+Main.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+Main.BackgroundTransparency = 0.25
+Main.BorderSizePixel = 0
+Main.Active = true
+Main.Draggable = true
+Main.Parent = Gui
+
+local Corner = Instance.new("UICorner")
+Corner.CornerRadius = UDim.new(0, 10)
+Corner.Parent = Main
+
+local Stroke = Instance.new("UIStroke")
+Stroke.Color = Color3.fromRGB(90, 90, 90)
+Stroke.Thickness = 1
+Stroke.Transparency = 0.4
+Stroke.Parent = Main
+
+-- TITLE
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 32)
+Title.BackgroundTransparency = 1
+Title.Font = Enum.Font.GothamBold
+Title.Text = "KVK"
+Title.TextColor3 = Color3.fromRGB(230, 230, 230)
+Title.TextSize = 16
+Title.Parent = Main
+
+-- KEYBIND ROW
+local KeyRow = Instance.new("Frame")
+KeyRow.Size = UDim2.new(1, -20, 0, 34)
+KeyRow.Position = UDim2.new(0, 10, 0, 36)
+KeyRow.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+KeyRow.BorderSizePixel = 0
+KeyRow.Parent = Main
+
+local KeyCorner = Instance.new("UICorner")
+KeyCorner.CornerRadius = UDim.new(0, 6)
+KeyCorner.Parent = KeyRow
+
+local KeyLabel = Instance.new("TextLabel")
+KeyLabel.Size = UDim2.new(0, 90, 1, 0)
+KeyLabel.BackgroundTransparency = 1
+KeyLabel.Font = Enum.Font.Gotham
+KeyLabel.Text = "Toggle Key"
+KeyLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+KeyLabel.TextSize = 13
+KeyLabel.Parent = KeyRow
+
+local KeyBtn = Instance.new("TextButton")
+KeyBtn.Size = UDim2.new(0, 90, 0, 24)
+KeyBtn.Position = UDim2.new(1, -100, 0, 5)
+KeyBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+KeyBtn.BorderSizePixel = 0
+KeyBtn.Font = Enum.Font.GothamBold
+KeyBtn.Text = tostring(Config.ToggleKey.Name)
+KeyBtn.TextColor3 = Color3.fromRGB(230, 230, 230)
+KeyBtn.TextSize = 13
+KeyBtn.AutoButtonColor = false
+KeyBtn.Parent = KeyRow
+
+local KeyBtnCorner = Instance.new("UICorner")
+KeyBtnCorner.CornerRadius = UDim.new(0, 6)
+KeyBtnCorner.Parent = KeyBtn
+
+-- ESP MASTER ROW
+local function makeRow(text, yPos)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, -20, 0, 30)
+    row.Position = UDim2.new(0, 10, 0, yPos)
+    row.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    row.BorderSizePixel = 0
+    row.Parent = Main
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 6)
+    c.Parent = row
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -50, 1, 0)
+    lbl.Position = UDim2.new(0, 10, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.Gotham
+    lbl.Text = text
+    lbl.TextColor3 = Color3.fromRGB(210, 210, 210)
+    lbl.TextSize = 13
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 40, 0, 20)
+    btn.Position = UDim2.new(1, -50, 0, 5)
+    btn.BackgroundColor3 = Color3.fromRGB(180, 60, 60)
+    btn.BorderSizePixel = 0
+    btn.Font = Enum.Font.GothamBold
+    btn.Text = "OFF"
+    btn.TextColor3 = Color3.fromRGB(230, 230, 230)
+    btn.TextSize = 12
+    btn.Parent = row
+    local bc = Instance.new("UICorner")
+    bc.CornerRadius = UDim.new(0, 5)
+    bc.Parent = btn
+    return row, btn
 end
 
--- Interface
-local gui = Instance.new("ScreenGui")
-gui.Name = guiName
-gui.ResetOnSpawn = false
-gui.Parent = player.PlayerGui
-
-local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(165, 60)
-frame.Position = UDim2.new(0.5, -82, 0.5, -30)
-frame.BackgroundColor3 = Color3.fromRGB(20, 20, 23)
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Draggable = true
-frame.Parent = gui
-
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
-
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(65, 65, 70)
-stroke.Parent = frame
-
-local button = Instance.new("TextButton")
-button.Size = UDim2.new(1, -12, 1, -12)
-button.Position = UDim2.fromOffset(6, 6)
-button.BackgroundColor3 = Color3.fromRGB(55, 55, 60)
-button.TextColor3 = Color3.new(1, 1, 1)
-button.Text = "ORIGINAL: OFF"
-button.TextSize = 12
-button.Font = Enum.Font.GothamBold
-button.BorderSizePixel = 0
-button.Parent = frame
-
-Instance.new("UICorner", button).CornerRadius = UDim.new(0, 7)
-
-button.MouseButton1Click:Connect(function()
-    if not enabled then
-        local car = findMyCar()
-
-        if not car then
-            button.Text = "CARRO NÃO ENCONTRADO"
-            task.wait(1)
-            button.Text = "ORIGINAL: OFF"
-            return
-        end
-
-        enabled = true
-        originalCar = car
-        hideCar(originalCar)
-
-        button.Text = "ORIGINAL: ON"
-        button.BackgroundColor3 = Color3.fromRGB(35, 110, 65)
+local function bindToggle(btn, key)
+    local on = Config.ESP[key]
+    if on then
+        btn.Text = "ON"
+        btn.BackgroundColor3 = Color3.fromRGB(60, 180, 90)
     else
-        enabled = false
-        restoreCar()
-
-        button.Text = "ORIGINAL: OFF"
-        button.BackgroundColor3 = Color3.fromRGB(55, 55, 60)
+        btn.Text = "OFF"
+        btn.BackgroundColor3 = Color3.fromRGB(180, 60, 60)
     end
-end)
-
--- Esconde novas peças que forem adicionadas ao carro original,
--- sem tocar em modelos externos.
-task.spawn(function()
-    while gui.Parent do
-        task.wait(0.5)
-
-        if enabled then
-            if not originalCar or not originalCar.Parent then
-                enabled = false
-                restoreCar()
-                button.Text = "ORIGINAL: OFF"
-                button.BackgroundColor3 = Color3.fromRGB(55, 55, 60)
-            else
-                hideCar(originalCar)
-            end
+    btn.MouseButton1Click:Connect(function()
+        Config.ESP[key] = not Config.ESP[key]
+        if Config.ESP[key] then
+            btn.Text = "ON"
+            btn.BackgroundColor3 = Color3.fromRGB(60, 180, 90)
+        else
+            btn.Text = "OFF"
+            btn.BackgroundColor3 = Color3.fromRGB(180, 60, 60)
         end
+    end)
+end
+
+local r1, b1 = makeRow("ESP", 78);          bindToggle(b1, "Enabled")
+local r2, b2 = makeRow("Box", 114);         bindToggle(b2, "Box")
+local r3, b3 = makeRow("Name", 150);        bindToggle(b3, "Name")
+local r4, b4 = makeRow("Line", 186);        bindToggle(b4, "Line")
+local r5, b5 = makeRow("Health", 222);      bindToggle(b5, "Health")
+local r6, b6 = makeRow("Distance", 258);    bindToggle(b6, "Distance")
+local r7, b7 = makeRow("Team Check", 294);  bindToggle(b7, "TeamCheck")
+local r8, b8 = makeRow("Cars ESP", 330);    bindToggle(b8, "Cars")
+
+--============================================================
+-- KEYBIND CAPTURE
+--============================================================
+local capturing = false
+KeyBtn.MouseButton1Click:Connect(function()
+    capturing = true
+    KeyBtn.Text = "..."
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+
+    if capturing then
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            Config.ToggleKey = input.KeyCode
+            KeyBtn.Text = input.KeyCode.Name
+            capturing = false
+        end
+        return
+    end
+
+    if input.KeyCode == Config.ToggleKey then
+        Main.Visible = not Main.Visible
     end
 end)
+
+--============================================================
+-- MOBILE TOGGLE BUTTON
+--============================================================
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
+local MiniBtn = Instance.new("TextButton")
+MiniBtn.Size = UDim2.new(0, 40, 0, 40)
+MiniBtn.Position = UDim2.new(0, 10, 0, 10)
+MiniBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MiniBtn.BackgroundTransparency = 0.3
+MiniBtn.Text = ""
+MiniBtn.BorderSizePixel = 0
+MiniBtn.Visible = isMobile
+MiniBtn.Parent = Gui
+
+local MiniCorner = Instance.new("UICorner")
+MiniCorner.CornerRadius = UDim.new(1, 0)
+MiniCorner.Parent = MiniBtn
+
+MiniBtn.MouseButton1Click:Connect(function()
+    Main.Visible = not Main.Visible
+end)
+
+-- HIDE MOBILE BTN WHEN MAIN OPEN
+Main:GetPropertyChangedSignal("Visible"):Connect(function()
+    if isMobile then
+        MiniBtn.Visible = not Main.Visible
+    end
+end)
+
+MiniBtn.MouseButton1Click:Connect(function()
+    if isMobile then
+        MiniBtn.Visible = false
+    end
+end)
+Main.Visible = true
+
+--============================================================
+-- MOBILE: after toggle open, show mini btn
+--============================================================
+if isMobile then
+    Main.Visible = true
+    MiniBtn.Visible = true
+end
